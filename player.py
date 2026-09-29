@@ -221,6 +221,9 @@ class Player:
             # sur le plan overlay (défaut de mpv) chaque image est refusée
             # par le pilote vc4 et l'écran reste noir.
             drm_drmprime_video_plane="primary", drm_draw_plane="overlay",
+            # mpv refait le modeset DRM et prendrait le mode « preferred » de
+            # l'écran (souvent 4K), sans tenir compte du video= de cmdline.txt
+            drm_mode="1920x1080@60",
             log_handler=self._mpv_log, loglevel="error",
             # keep-open garde la dernière image à la fin d'un fichier ; sans
             # keep-open-pause=no, mpv se met aussi en pause et le fichier chargé
