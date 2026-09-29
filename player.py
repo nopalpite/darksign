@@ -122,6 +122,17 @@ def write_concat(dest, path, duration, count):
     os.replace(tmp, dest)
 
 
+def hdmi_audio_device(name):
+    """Sortie HDMI : périphérique alsa « hdmi » plutôt que « plughw »."""
+    # plughw envoie un en-tête IEC958 sans fréquence d'échantillonnage ;
+    # certains projecteurs (EPSON) restent alors muets. Le périphérique hdmi
+    # le remplit. Convertit aussi les configurations enregistrées avant.
+    prefix = "alsa/plughw:CARD=vc4hdmi"
+    if name.startswith(prefix):
+        return "alsa/hdmi:CARD=vc4hdmi" + name[len(prefix):]
+    return name
+
+
 class GpioWatcher:
     """Surveille les broches d'entrée et signale chaque appui."""
 
@@ -290,7 +301,8 @@ class Player:
         self.last_error = None
         self._open_udp(int(self.cfg.get("udp_port") or 0))
         self.mpv.volume = max(0, min(100, int(self.cfg.get("volume", 100))))
-        self.mpv.audio_device = self.cfg.get("audio_device") or "auto"
+        self.mpv.audio_device = hdmi_audio_device(
+            self.cfg.get("audio_device") or "auto")
         style = self.cfg["subtitle_style"]
         self.mpv.sub_font_size = SUBTITLE_SIZES.get(style.get("size"), 48)
         if style.get("background"):
@@ -738,12 +750,17 @@ class Player:
         try:
             devices = [{"name": "auto", "description": "Automatique"}]
             for d in self.mpv.audio_device_list:
-                # plughw : convertit le format si besoin, une entrée par carte
-                if d["name"].startswith("alsa/plughw:"):
-                    label = ("HDMI" if "hdmi" in d["name"].lower() else
-                             "Prise jack" if "Headphones" in d["name"] else
+                # une entrée par carte : hdmi pour les sorties HDMI (voir
+                # hdmi_audio_device), plughw (convertit le format) pour les autres
+                name = d["name"]
+                if name.startswith("alsa/hdmi:"):
+                    label = "HDMI"
+                elif name.startswith("alsa/plughw:") and "hdmi" not in name.lower():
+                    label = ("Prise jack" if "Headphones" in name else
                              d["description"])
-                    devices.append({"name": d["name"], "description": label})
+                else:
+                    continue
+                devices.append({"name": name, "description": label})
             position = self.mpv.time_pos
             duration = self.mpv.duration
         except Exception:
