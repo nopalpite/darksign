@@ -225,6 +225,7 @@ class Player:
         self.splash_waiting = False  # logo tenu à l'écran en attendant le réseau
         self.splash_deadline = 0.0
         self.splash_shown = None     # (clé, "anim" | "image") affiché
+        self.audio_reopened = 0.0    # dernière réouverture de la sortie son
 
         self.mpv = mpv.MPV(
             vo="gpu", gpu_context="drm", hwdec="v4l2m2m", ao="alsa",
@@ -261,6 +262,10 @@ class Player:
         @self.mpv.event_callback("file-loaded")
         def _file_loaded(_event):
             self.events.put(("file_loaded",))
+
+        @self.mpv.event_callback("playback-restart")
+        def _playback_restart(_event):
+            self.events.put(("playback_restart",))
 
     @staticmethod
     def _mpv_log(level, component, message):
@@ -341,6 +346,8 @@ class Player:
             return
         self.paused = bool(paused)
         self.mpv.pause = self.paused
+        if not self.paused:
+            self._reopen_audio()
         log.info("lecture %s", "en pause" if self.paused else "reprise")
 
     def _resume(self):
@@ -363,6 +370,29 @@ class Player:
         except OSError as e:
             self.udp_error = f"port UDP {port} indisponible : {e.strerror or e}"
             log.error(self.udp_error)
+
+    def _on_playback_restart(self):
+        # le nouveau fichier affiche sa première image : voir _hide_subtitles
+        self.mpv.sub_visibility = True
+        self._reopen_audio()
+
+    def _hide_subtitles(self):
+        # Jusqu'à la première image du nouveau fichier, mpv redessine la
+        # dernière image de l'ancien, à son horodatage (grand dans une boucle
+        # continue), avec les sous-titres du nouveau : une phrase prise au
+        # hasard s'afficherait par-dessus l'accroche.
+        self.mpv.sub_visibility = False
+
+    def _reopen_audio(self):
+        # Son HDMI (pilote vc4) : quand mpv arrête puis relance le flux sans
+        # fermer la sortie (nouveau fichier, reprise après pause), le son est
+        # parfois perdu jusqu'à la réouverture suivante. On force donc une
+        # réouverture complète à chaque démarrage de lecture.
+        now = time.monotonic()
+        if (self.mpv.audio_device.startswith("alsa/hdmi:")
+                and now - self.audio_reopened > 1):   # jamais en rafale
+            self.audio_reopened = now
+            self.mpv.command("ao-reload")
 
     def _find_trigger(self, match):
         if not self.cfg or self.cfg["mode"] != "interactive":
@@ -440,6 +470,7 @@ class Player:
         sub = self.cfg["subtitles"].get(entry["media"])
         self.current_sub = None
         if sub and (MEDIA_DIR / sub).is_file():
+            self._hide_subtitles()
             self.mpv.command("sub-add", str(MEDIA_DIR / sub), "select")
             self.current_sub = sub
 
@@ -688,6 +719,7 @@ class Player:
         self.mpv.mute = bool(muted)
         sub = self.cfg["subtitles"].get(media) if kind == "video" else None
         subs = [str(MEDIA_DIR / sub)] if sub and (MEDIA_DIR / sub).is_file() else []
+        self._hide_subtitles()
         self.mpv["sub-files"] = subs   # pris en compte au chargement du fichier
         self.current_sub = sub if subs else None
         self.mpv.sub_delay = 0
