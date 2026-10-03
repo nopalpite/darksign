@@ -27,6 +27,7 @@ import subprocess
 import threading
 import time
 
+import glob
 import hashlib
 import socket
 import sys
@@ -122,15 +123,43 @@ def write_concat(dest, path, duration, count):
     os.replace(tmp, dest)
 
 
-def hdmi_audio_device(name):
-    """Sortie HDMI : périphérique alsa « hdmi » plutôt que « plughw »."""
-    # plughw envoie un en-tête IEC958 sans fréquence d'échantillonnage ;
-    # certains projecteurs (EPSON) restent alors muets. Le périphérique hdmi
-    # le remplit. Convertit aussi les configurations enregistrées avant.
-    prefix = "alsa/plughw:CARD=vc4hdmi"
-    if name.startswith(prefix):
-        return "alsa/hdmi:CARD=vc4hdmi" + name[len(prefix):]
-    return name
+DISPLAY_MODE = "1920x1080@60"
+DISPLAY_CHECK = 2    # s : sans écran au démarrage, attente d'un branchement
+
+
+def hdmi_connectors():
+    """Sorties HDMI du pilote DRM : [(dossier sysfs, branchée ?)]."""
+    found = []
+    for status in sorted(glob.glob("/sys/class/drm/card*-HDMI-A-*/status")):
+        try:
+            found.append((os.path.dirname(status),
+                          open(status).read().strip() == "connected"))
+        except OSError:
+            pass
+    return found
+
+
+def display_mode():
+    """Mode d'affichage imposé à mpv.
+
+    mpv refait le modeset DRM et prendrait le mode « preferred » de l'écran
+    (souvent 4K), sans tenir compte du video= de cmdline.txt : on impose le
+    1080p. Mais un écran qui ne le propose pas (projecteur 720p…) resterait
+    noir : on garde alors son mode préféré.
+    """
+    width_height = DISPLAY_MODE.split("@")[0]
+    for path, connected in hdmi_connectors():
+        if connected:
+            try:
+                modes = open(os.path.join(path, "modes")).read().split()
+            except OSError:
+                continue
+            if width_height in modes:
+                return DISPLAY_MODE
+            log.warning("écran sans mode %s (modes : %s) : mode préféré de l'écran",
+                        width_height, ", ".join(dict.fromkeys(modes)) or "aucun")
+            return "preferred"
+    return DISPLAY_MODE
 
 
 class GpioWatcher:
@@ -226,6 +255,8 @@ class Player:
         self.splash_deadline = 0.0
         self.splash_shown = None     # (clé, "anim" | "image") affiché
         self.audio_reopened = 0.0    # dernière réouverture de la sortie son
+        self.no_display = False      # mpv n'a pas pu ouvrir l'affichage
+        self.display_checked = 0.0
 
         self.mpv = mpv.MPV(
             vo="gpu", gpu_context="drm", hwdec="v4l2m2m", ao="alsa",
@@ -233,9 +264,7 @@ class Player:
             # sur le plan overlay (défaut de mpv) chaque image est refusée
             # par le pilote vc4 et l'écran reste noir.
             drm_drmprime_video_plane="primary", drm_draw_plane="overlay",
-            # mpv refait le modeset DRM et prendrait le mode « preferred » de
-            # l'écran (souvent 4K), sans tenir compte du video= de cmdline.txt
-            drm_mode="1920x1080@60",
+            drm_mode=display_mode(),   # 1080p si l'écran le propose
             log_handler=self._mpv_log, loglevel="error",
             # keep-open garde la dernière image à la fin d'un fichier ; sans
             # keep-open-pause=no, mpv se met aussi en pause et le fichier chargé
@@ -267,10 +296,12 @@ class Player:
         def _playback_restart(_event):
             self.events.put(("playback_restart",))
 
-    @staticmethod
-    def _mpv_log(level, component, message):
-        if "TTY" not in message and "VT switcher" not in message:
-            log.error("mpv[%s] %s", component, message.strip())
+    def _mpv_log(self, level, component, message):
+        if "TTY" in message or "VT switcher" in message:
+            return
+        if "Error opening/initializing the selected video_out" in message:
+            self.no_display = True   # voir _check_display
+        log.error("mpv[%s] %s", component, message.strip())
 
     # --- boucle principale : toutes les transitions passent par ici ---------
 
@@ -287,6 +318,8 @@ class Player:
             try:
                 ev, *args = self.events.get(timeout=1)
             except queue.Empty:
+                if self._check_display():
+                    break
                 self._refresh_splash()
                 continue
             try:
@@ -306,8 +339,7 @@ class Player:
         self.last_error = None
         self._open_udp(int(self.cfg.get("udp_port") or 0))
         self.mpv.volume = max(0, min(100, int(self.cfg.get("volume", 100))))
-        self.mpv.audio_device = hdmi_audio_device(
-            self.cfg.get("audio_device") or "auto")
+        self.mpv.audio_device = self.cfg.get("audio_device") or "auto"
         style = self.cfg["subtitle_style"]
         self.mpv.sub_font_size = SUBTITLE_SIZES.get(style.get("size"), 48)
         if style.get("background"):
@@ -617,6 +649,26 @@ class Player:
         if self.state == "setup" and key == self.splash_key:
             self._show_splash("change")
 
+    def _check_display(self):
+        """Sans écran au démarrage (projecteur éteint, câble débranché), mpv
+        n'ouvre pas l'affichage et ne le rouvre jamais : le lecteur attend
+        qu'un écran soit branché puis s'arrête, systemd le relance aussitôt.
+        Renvoie True pour arrêter le lecteur."""
+        if not self.no_display:
+            return False
+        now = time.monotonic()
+        if now - self.display_checked < DISPLAY_CHECK:
+            return False
+        self.display_checked = now
+        if any(connected for _, connected in hdmi_connectors()):
+            log.info("écran détecté : redémarrage du lecteur")
+            return True
+        error = "aucun écran détecté : branchez ou allumez l'écran HDMI"
+        if self.last_error != error:
+            self.last_error = error
+            log.warning(error)
+        return False
+
     def _refresh_splash(self):
         # l'adresse IP peut arriver après le démarrage (DHCP, Wi-Fi) ou changer
         if self.state != "setup":
@@ -783,7 +835,7 @@ class Player:
             devices = [{"name": "auto", "description": "Automatique"}]
             for d in self.mpv.audio_device_list:
                 # une entrée par carte : hdmi pour les sorties HDMI (voir
-                # hdmi_audio_device), plughw (convertit le format) pour les autres
+                # common.hdmi_audio_device), plughw (convertit le format) pour les autres
                 name = d["name"]
                 if name.startswith("alsa/hdmi:"):
                     label = "HDMI"

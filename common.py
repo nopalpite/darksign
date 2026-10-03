@@ -92,6 +92,17 @@ def fps_of(stream):
     return 0
 
 
+def hdmi_audio_device(name):
+    """Sortie HDMI : périphérique alsa « hdmi » plutôt que « plughw »."""
+    # plughw envoie un en-tête IEC958 sans fréquence d'échantillonnage ;
+    # certains projecteurs (EPSON) restent alors muets. Le périphérique hdmi
+    # le remplit.
+    prefix = "alsa/plughw:CARD=vc4hdmi"
+    if name.startswith(prefix):
+        return "alsa/hdmi:CARD=vc4hdmi" + name[len(prefix):]
+    return name
+
+
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     try:
@@ -103,6 +114,9 @@ def load_config():
             cfg[key].update(value)
         else:
             cfg[key] = value
+    # configurations enregistrées avant le passage au périphérique hdmi : le
+    # lecteur et l'interface (liste des sorties) voient la même valeur
+    cfg["audio_device"] = hdmi_audio_device(cfg.get("audio_device") or "auto")
     # ancien format de la boucle simple : un seul média
     old = cfg["loop"].pop("media", None)
     if old and not cfg["loop"]["items"]:
