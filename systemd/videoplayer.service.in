@@ -1,8 +1,8 @@
 [Unit]
 StartLimitIntervalSec=0
-Description=Lecteur vidéo plein écran piloté par GPIO (mpv)
-# Démarrage au plus tôt, sans attendre le réseau ni la fin du démarrage :
-# l'intro DarkSign s'affiche dès que la carte graphique est prête.
+Description=DarkSign full-screen video player (mpv)
+# Start as early as possible, without waiting for the network or the end of
+# boot: the DarkSign intro shows as soon as the graphics card is ready.
 DefaultDependencies=no
 Wants=dev-dri-card0.device
 After=local-fs.target dev-dri-card0.device
@@ -17,7 +17,7 @@ ExecStart=/usr/bin/python3 @DIR@/player.py
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=2
-# le lecteur est le dernier processus sacrifié en cas de manque de mémoire
+# the player is the last process killed when memory runs out
 OOMScoreAdjust=-800
 
 [Install]

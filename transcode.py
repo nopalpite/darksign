@@ -1,11 +1,13 @@
-"""Conversion des vidéos importées vers un format optimal pour le Pi 3.
+"""Conversion of uploaded videos to the best format for the Pi.
 
-Cible : H.264 (décodé matériellement), yuv420p, conteneur MP4, résolution et
-cadence d'origine conservées (sauf au-delà de 1080p, limite du décodeur).
+Target: H.264 (hardware-decoded), yuv420p, MP4 container, original resolution
+and frame rate kept (except above 1080p, the decoder limit).
 
-Les fichiers envoyés arrivent dans media/.incoming/ ; une file de conversion
-unique les traite un par un et dépose le résultat dans media/. Au redémarrage
-du backend, les fichiers restés dans .incoming/ sont remis en file.
+Uploaded files land in media/.incoming/; a single conversion queue handles
+them one by one and moves the result to media/. When the backend restarts,
+files left in .incoming/ are queued again.
+
+Reasons and errors shown in the web UI are structured messages (i18n.msg).
 """
 import json
 import os
@@ -16,21 +18,22 @@ import uuid
 from pathlib import Path
 
 from common import MEDIA_DIR, fps_of
+from i18n import msg
 
 INCOMING_DIR = MEDIA_DIR / ".incoming"
 
 MAX_W, MAX_H = 1920, 1080
-MAX_BITRATE = 25_000_000       # au-delà, risque de saccades à la lecture
+MAX_BITRATE = 25_000_000       # above that, playback may stutter
 AUDIO_COPY = {"aac", "mp3"}
-# dispositions que ffmpeg sait réduire en stéréo (-ac 2)
+# layouts ffmpeg can downmix to stereo by itself (-ac 2)
 STANDARD_LAYOUTS = {"mono", "stereo", "2.1", "3.0", "3.0(back)", "3.1", "4.0",
                     "quad", "quad(side)", "4.1", "5.0", "5.0(side)", "5.1",
                     "5.1(side)", "6.0", "6.1", "7.0", "7.1", "7.1(wide)"}
 SILENCE_DB = -60
 
-# Encodeur matériel du Pi 3 : ~5x plus rapide que x264 à qualité équivalente
-# (mesuré : 1080p25, ~2,5 s de conversion par seconde de vidéo).
-# x264 ne sert qu'en secours si l'encodeur matériel refuse la source.
+# Hardware encoder of the Pi: ~5x faster than x264 at the same quality
+# (measured on a Pi 3: 1080p25, ~2.5 s of conversion per second of video).
+# x264 is only a fallback when the hardware encoder rejects the source.
 ENCODERS = ("h264_v4l2m2m", "libx264")
 
 
@@ -52,40 +55,50 @@ def probe(path):
 
 
 def plan(path):
-    """Renvoie (action, raisons) : action = copy | remux | transcode."""
+    """Return (action, reasons): action = copy | remux | transcode."""
     video, audio, fmt = probe(path)
     if not video:
-        raise ValueError("aucune piste vidéo détectée")
+        raise JobError(msg("job.error.no_video"))
     reasons = []
     if video.get("codec_name") != "h264":
-        reasons.append(f"codec {video.get('codec_name')}")
+        reasons.append(msg("job.reason.codec", codec=video.get("codec_name")))
     if video.get("pix_fmt") != "yuv420p":
-        reasons.append(f"format de pixel {video.get('pix_fmt')}")
+        reasons.append(msg("job.reason.pix_fmt", pix_fmt=video.get("pix_fmt")))
     if (video.get("width") or 0) > MAX_W or (video.get("height") or 0) > MAX_H:
-        reasons.append(f"résolution {video['width']}×{video['height']}")
+        reasons.append(msg("job.reason.resolution", width=video["width"],
+                           height=video["height"]))
     if video.get("field_order") not in (None, "progressive", "unknown"):
-        reasons.append("vidéo entrelacée")
+        reasons.append(msg("job.reason.interlaced"))
     if int(fmt.get("bit_rate") or 0) > MAX_BITRATE:
-        reasons.append(f"débit {int(fmt['bit_rate']) // 1_000_000} Mb/s")
+        reasons.append(msg("job.reason.bitrate",
+                           mbps=int(fmt["bit_rate"]) // 1_000_000))
     if reasons:
         return "transcode", reasons
     audio_ok = not audio or audio.get("codec_name") in AUDIO_COPY
     if "mp4" not in fmt.get("format_name", "") or not audio_ok:
-        return "remux", ["conteneur ou audio à adapter"]
+        return "remux", [msg("job.reason.remux")]
     return "copy", []
 
 
-def audio_mix(path, audio):
-    """Choix des canaux pour une piste audio multicanale non standard.
+class JobError(Exception):
+    """Conversion failure, with a structured message for the web UI."""
 
-    Renvoie (filtre ffmpeg, explication) ou (None, None) si ffmpeg sait faire
-    le mixage stéréo seul. Sinon on garde les deux premiers canaux non
-    silencieux (exports pro : canal 1 muet, paire stéréo en 2-3, etc.).
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
+
+
+def audio_mix(path, audio):
+    """Channel choice for a non-standard multichannel audio track.
+
+    Return (ffmpeg filter, explanation), or (None, None) when ffmpeg can
+    downmix to stereo by itself. Otherwise keep the first two non-silent
+    channels (pro exports: channel 1 silent, stereo pair on 2-3, etc.).
     """
     channels = int(audio.get("channels") or 0) if audio else 0
     if channels <= 2 or audio.get("channel_layout") in STANDARD_LAYOUTS:
         return None, None
-    # niveau de chaque canal sur les 3 premières minutes
+    # level of each channel over the first 3 minutes
     err = subprocess.run(
         ["nice", "-n", "19", "ffmpeg", "-hide_banner", "-nostats", "-t", "180",
          "-i", str(path), "-map", "0:a:0", "-af",
@@ -100,21 +113,21 @@ def audio_mix(path, audio):
             levels.append(float("-inf") if "inf" in value else float(value))
     active = [i for i, db in enumerate(levels[:channels]) if db > SILENCE_DB]
     if not active:
-        return "pan=stereo|c0=c0|c1=c1", f"audio {channels} canaux silencieux"
+        return ("pan=stereo|c0=c0|c1=c1",
+                msg("job.reason.audio_silent", channels=channels))
     if len(active) == 1:
         c = active[0]
         return (f"pan=stereo|c0=c{c}|c1=c{c}",
-                f"audio {channels} canaux : canal {c + 1} seul utilisé")
+                msg("job.reason.audio_mono", channels=channels, channel=c + 1))
     a, b = active[:2]
-    note = f"audio {channels} canaux : canaux {a + 1} et {b + 1} utilisés en stéréo"
-    ignored = [str(i + 1) for i in active[2:]]
-    if ignored:
-        note += f", canal {', '.join(ignored)} ignoré"
-    return f"pan=stereo|c0=c{a}|c1=c{b}", note
+    ignored = ", ".join(str(i + 1) for i in active[2:])
+    key = "job.reason.audio_pair_ignored" if ignored else "job.reason.audio_pair"
+    return (f"pan=stereo|c0=c{a}|c1=c{b}",
+            msg(key, channels=channels, first=a + 1, second=b + 1, ignored=ignored))
 
 
 def video_bitrate(video, fps):
-    """~0,2 bit par pixel : 1080p25 -> ~10 Mb/s."""
+    """~0.2 bit per pixel: 1080p25 -> ~10 Mb/s."""
     pixels = (video.get("width") or MAX_W) * (video.get("height") or MAX_H)
     return int(max(2e6, min(16e6, pixels * fps * 0.2)))
 
@@ -140,7 +153,7 @@ def build_command(src, dst, action, encoder=ENCODERS[0], audio_filter=None):
                            ":force_divisible_by=2")
         if filters:
             cmd += ["-vf", ",".join(filters)]
-        # cadence d'origine conservée (pas de -r) ; image clé toutes les ~2 s
+        # original frame rate kept (no -r); a keyframe every ~2 s
         cmd += ["-g", str(round(fps * 2))]
     else:
         cmd += ["-c:v", "copy"]
@@ -155,11 +168,11 @@ def build_command(src, dst, action, encoder=ENCODERS[0], audio_filter=None):
 
 class Job:
     def __init__(self, src, job_id=None):
-        # fichier source : .incoming/<id>--<nom d'origine>
+        # source file: .incoming/<id>--<original name>
         self.id = job_id or uuid.uuid4().hex[:8]
         self.src = src
         self.original = src.name.split("--", 1)[-1]
-        self.name = final_name(self.original)   # nom final dans media/
+        self.name = final_name(self.original)   # final name in media/
         self.state = "queued"     # queued | analyzing | converting | done | error
         self.progress = 0.0
         self.eta = None
@@ -178,15 +191,15 @@ class Job:
 
 class Converter:
     def __init__(self, on_done):
-        self.on_done = on_done    # appelé avec le nom du média prêt
+        self.on_done = on_done    # called with the name of the ready media
         self.jobs = []
         self.lock = threading.Lock()
         self.wakeup = threading.Event()
         INCOMING_DIR.mkdir(parents=True, exist_ok=True)
         for f in sorted(INCOMING_DIR.iterdir(), key=lambda f: f.stat().st_mtime):
-            if f.name.startswith("."):          # envoi interrompu
+            if f.name.startswith("."):          # interrupted upload
                 f.unlink()
-            elif "--" in f.name:                # reprise après redémarrage
+            elif "--" in f.name:                # resumed after a restart
                 self.jobs.append(Job(f, f.name.split("--", 1)[0]))
         threading.Thread(target=self._worker, daemon=True).start()
         self.wakeup.set()
@@ -196,7 +209,7 @@ class Converter:
         src = INCOMING_DIR / f"{job_id}--{original_name}"
         os.replace(uploaded, src)
         job = Job(src, job_id)
-        # un nouvel envoi du même fichier remplace la conversion précédente
+        # uploading the same file again replaces the previous conversion
         for j in self.list():
             if j["name"] == job.name:
                 self.remove(j["id"])
@@ -245,7 +258,7 @@ class Converter:
                     if job.cancelled and job in self.jobs:
                         self.jobs.remove(job)
                         job.src.unlink(missing_ok=True)
-                    # on ne garde les conversions terminées que 10 min à l'écran
+                    # finished conversions stay listed for 10 minutes only
                     now = time.time()
                     self.jobs = [j for j in self.jobs
                                  if j.state != "done" or now - j.finished < 600]
@@ -280,14 +293,16 @@ class Converter:
                 if job.cancelled:
                     return
                 if err is not None:
-                    raise RuntimeError(err)
+                    raise JobError(msg("job.error.ffmpeg", detail=err))
                 job.src.unlink(missing_ok=True)
 
             os.replace(tmp, MEDIA_DIR / job.name)
             job.state, job.progress, job.eta = "done", 1.0, None
             self.on_done(job.name)
+        except JobError as e:
+            job.state, job.error = "error", e.message
         except Exception as e:
-            job.state, job.error = "error", str(e)
+            job.state, job.error = "error", msg("job.error.other", detail=str(e))
         finally:
             job.proc = None
             job.finished = time.time()
@@ -295,7 +310,7 @@ class Converter:
 
     @staticmethod
     def _ffmpeg(job, cmd, duration):
-        """Lance ffmpeg en suivant la progression ; renvoie None ou l'erreur."""
+        """Run ffmpeg, following its progress; return None or the error."""
         job.progress, job.eta = 0.0, None
         start = time.monotonic()
         job.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -310,7 +325,7 @@ class Converter:
         err = job.proc.stderr.read().strip()
         if job.proc.wait() == 0:
             return None
-        return err.splitlines()[-1] if err else "échec de ffmpeg"
+        return err.splitlines()[-1] if err else "ffmpeg failed"
 
 
 def final_name(filename):

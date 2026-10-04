@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DarkSign</title>
 <script>
-  // thème choisi appliqué avant l'affichage : pas de flash clair au chargement
+  // chosen theme applied before the first paint: no light flash on load
   try {
-    const t = localStorage.getItem("theme");
-    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    const theme = localStorage.getItem("theme");
+    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
   } catch {}
 </script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%20aria-hidden%3D%22true%22%3E%3Cdefs%3E%3CradialGradient%20id%3D%22c%22%3E%3Cstop%20offset%3D%220.58%22%20stop-color%3D%22%23ffb054%22%20stop-opacity%3D%220%22/%3E%3Cstop%20offset%3D%220.63%22%20stop-color%3D%22%23fff3e0%22/%3E%3Cstop%20offset%3D%220.74%22%20stop-color%3D%22%23ffa23e%22%20stop-opacity%3D%22.75%22/%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ff9030%22%20stop-opacity%3D%220%22/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22url%28%23c%29%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%229.8%22%20fill%3D%22%230b0c0f%22/%3E%3C/svg%3E">
@@ -21,7 +21,7 @@
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     color-scheme: light;
   }
-  /* thème sombre : automatique (réglage du système) ou choisi dans l'en-tête */
+  /* dark theme: automatic (system setting) or chosen in the header */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #111418; --card: #1a1f25; --border: #2a313a; --text: #e6e9ed;
@@ -36,7 +36,8 @@
     --accent: #f5a524; --on-accent: #1a1206;
     color-scheme: dark;
   }
-  .theme { margin-left: auto; font-size: 12px; padding: 4px 6px; }
+  .lang { margin-left: auto; }
+  .lang, .theme { font-size: 12px; padding: 4px 6px; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
   header {
@@ -206,141 +207,149 @@
     <span id="now">…</span>
     <span class="bar" id="progress" hidden><i></i></span>
   </div>
-  <select class="theme" id="theme" title="Thème de l'interface">
-    <option value="auto">◐ Auto</option>
-    <option value="light">☀ Clair</option>
-    <option value="dark">☾ Sombre</option>
+  <select class="lang" id="lang" data-i18n-title="header.language"></select>
+  <select class="theme" id="theme" data-i18n-title="header.theme">
+    <option value="auto" data-i18n="header.theme_auto">◐ Auto</option>
+    <option value="light" data-i18n="header.theme_light">☀ Light</option>
+    <option value="dark" data-i18n="header.theme_dark">☾ Dark</option>
   </select>
   <div class="transport" id="transport" hidden>
     <button class="btn" id="pause">⏸ Pause</button>
-    <button class="btn" id="restart" title="Relance la playlist ou l'accroche depuis le début">↺ Recommencer</button>
+    <button class="btn" id="restart" data-i18n="transport.restart"
+            data-i18n-title="transport.restart_title">↺ Restart</button>
   </div>
 </header>
 
 <main>
   <section>
-    <h2>Mode de lecture</h2>
+    <h2 data-i18n="mode.title">Playback mode</h2>
     <div class="alert" id="player-error" hidden></div>
     <div class="seg" id="mode">
-      <button data-mode="loop">Playlist</button>
-      <button data-mode="interactive">Interactif (boutons)</button>
+      <button data-mode="loop" data-i18n="mode.loop">Playlist</button>
+      <button data-mode="interactive" data-i18n="mode.interactive">Interactive (triggers)</button>
     </div>
 
     <div id="panel-loop">
       <table>
-        <thead><tr><th></th><th></th><th>Média</th><th>Répétitions / durée</th><th></th></tr></thead>
+        <thead><tr><th></th><th></th><th data-i18n="playlist.media">Media</th>
+          <th data-i18n="playlist.repeat_duration">Repeats / duration</th><th></th></tr></thead>
         <tbody id="playlist"></tbody>
       </table>
       <p style="margin:12px 0 0">
-        <button class="btn" id="add-item">+ Ajouter un média</button>
+        <button class="btn" id="add-item" data-i18n="playlist.add">+ Add media</button>
       </p>
       <p class="hint" id="playlist-hint"></p>
-      <label class="check"><input type="checkbox" id="loop-sound"> Avec le son</label>
+      <label class="check"><input type="checkbox" id="loop-sound">
+        <span data-i18n="playlist.sound">With sound</span></label>
     </div>
 
     <div id="panel-interactive">
       <div class="field">
-        <label for="attract">Accroche (en boucle)</label>
+        <label for="attract" data-i18n="interactive.attract">Attract loop</label>
         <select id="attract"></select>
       </div>
-      <label class="check"><input type="checkbox" id="attract-sound"> Son de l'accroche</label>
-      <label class="check"><input type="checkbox" id="triggers-sound"> Son des vidéos déclenchées</label>
+      <label class="check"><input type="checkbox" id="attract-sound">
+        <span data-i18n="interactive.attract_sound">Attract loop sound</span></label>
+      <label class="check"><input type="checkbox" id="triggers-sound">
+        <span data-i18n="interactive.triggers_sound">Triggered videos sound</span></label>
       <label class="check"><input type="checkbox" id="interruptible">
-        Un appui interrompt la vidéo en cours</label>
+        <span data-i18n="interactive.interruptible">A trigger interrupts the current video</span></label>
       <p class="hint" id="interruptible-hint"></p>
 
-      <h3>Déclencheurs</h3>
-      <p class="hint" style="margin:0 0 12px">Chaque vidéo se lance par un bouton câblé
-        sur une GPIO, par un message UDP, ou les deux.</p>
+      <h3 data-i18n="triggers.title">Triggers</h3>
+      <p class="hint" style="margin:0 0 12px" data-i18n="triggers.hint">Each video is started
+        by a button wired to a GPIO, by a UDP message, or both.</p>
       <div class="field">
-        <label for="wiring">Câblage</label>
+        <label for="wiring" data-i18n="triggers.wiring">Wiring</label>
         <select id="wiring">
-          <option value="low">Bouton entre GPIO et GND (pull-up interne)</option>
-          <option value="high">Bouton entre GPIO et 3V3 (pull-down interne)</option>
+          <option value="low" data-i18n="triggers.wiring_low">Button between GPIO and GND (internal pull-up)</option>
+          <option value="high" data-i18n="triggers.wiring_high">Button between GPIO and 3V3 (internal pull-down)</option>
         </select>
       </div>
       <table>
-        <thead><tr><th>Bouton GPIO</th><th>Message UDP</th><th>Vidéo lancée</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="triggers.gpio">GPIO button</th>
+          <th data-i18n="triggers.udp">UDP message</th>
+          <th data-i18n="triggers.video">Video played</th><th></th></tr></thead>
         <tbody id="triggers"></tbody>
       </table>
       <p style="margin:12px 0 0">
-        <button class="btn" id="add-trigger">+ Ajouter un déclencheur</button>
+        <button class="btn" id="add-trigger" data-i18n="triggers.add">+ Add trigger</button>
       </p>
     </div>
 
-    <h3>Son</h3>
+    <h3 data-i18n="sound.title">Sound</h3>
     <div class="field">
-      <label for="volume">Volume <span id="volume-val"></span></label>
+      <label for="volume"><span data-i18n="sound.volume">Volume</span> <span id="volume-val"></span></label>
       <input type="range" id="volume" min="0" max="100" step="5">
     </div>
     <div class="field">
-      <label for="audio-device">Sortie audio</label>
+      <label for="audio-device" data-i18n="sound.output">Audio output</label>
       <select id="audio-device"></select>
     </div>
 
-    <h3>Commandes UDP</h3>
+    <h3 data-i18n="udp.title">UDP commands</h3>
     <div class="field">
-      <label for="udp-port">Port d'écoute</label>
+      <label for="udp-port" data-i18n="udp.port">Listening port</label>
       <input type="number" class="text" id="udp-port" min="1024" max="65535" style="width:110px">
     </div>
-    <p class="hint">Messages texte, sans tenir compte des majuscules :
-      ceux des déclencheurs (mode interactif), plus <b>pause</b>, <b>play</b> et
-      <b>restart</b> dans tous les modes. Exemple :
-      <code id="udp-example"></code></p>
+    <p class="hint"><span data-i18n-html="udp.hint">Text messages, case-insensitive:
+      the triggers' ones (interactive mode), plus <b>pause</b>, <b>play</b> and
+      <b>restart</b> in every mode. Example:</span> <code id="udp-example"></code></p>
     <p class="hint" id="udp-last"></p>
 
-    <h3>Sous-titres</h3>
+    <h3 data-i18n="subtitles.title">Subtitles</h3>
     <div class="field">
-      <label for="sub-size">Taille</label>
+      <label for="sub-size" data-i18n="subtitles.size">Size</label>
       <select id="sub-size">
-        <option value="small">Petite</option>
-        <option value="medium">Moyenne</option>
-        <option value="large">Grande</option>
+        <option value="small" data-i18n="subtitles.small">Small</option>
+        <option value="medium" data-i18n="subtitles.medium">Medium</option>
+        <option value="large" data-i18n="subtitles.large">Large</option>
       </select>
     </div>
     <label class="check"><input type="checkbox" id="sub-background">
-      Fond sombre derrière le texte (meilleure lisibilité)</label>
-    <p class="hint">Associez un fichier .srt à une vidéo depuis la médiathèque.</p>
+      <span data-i18n="subtitles.background">Dark background behind the text (easier to read)</span></label>
+    <p class="hint" data-i18n="subtitles.hint">Link a .srt file to a video from the media library.</p>
   </section>
 
   <section>
-    <h2>Médiathèque</h2>
+    <h2 data-i18n="library.title">Media library</h2>
     <label class="drop" id="drop">
-      Glissez des vidéos, images ou sous-titres (.srt) ici, ou <u>parcourez</u><br>
-      <small>Les vidéos sont converties automatiquement pour une lecture fluide
-        sur le Pi (H.264, résolution et cadence d'origine conservées).</small>
+      <span data-i18n-html="library.drop">Drop videos, images or subtitles (.srt) here, or <u>browse</u></span><br>
+      <small data-i18n="library.drop_hint">Videos are converted automatically for smooth
+        playback on the Pi (H.264, original resolution and frame rate kept).</small>
       <input type="file" id="file" multiple hidden
              accept="video/*,image/*,.mkv,.mov,.m4v,.ts,.srt,.vtt,.ass">
     </label>
     <div class="prep" id="prep" hidden>
-      <p><b>Raspberry Pi 3 : convertissez vos vidéos sur votre ordinateur avant de
-        les envoyer.</b> Le lecteur sait le faire, mais sur ce modèle la conversion
-        est lente et sature le Pi, au point de perturber la lecture. Une vidéo déjà
-        au bon format est rangée telle quelle, instantanément.</p>
+      <p data-i18n-html="prep.intro"><b>Raspberry Pi 3: convert your videos on your computer
+        before uploading them.</b> The player can do it, but on this model the conversion is
+        slow and saturates the Pi, to the point of disturbing playback. A video already in
+        the right format is stored as is, instantly.</p>
       <details>
-        <summary>Avec HandBrake (gratuit, avec interface)</summary>
+        <summary data-i18n="prep.handbrake">With HandBrake (free, with an interface)</summary>
         <ol class="steps">
-          <li>Installez <a href="https://handbrake.fr/" target="_blank"
-            rel="noopener">HandBrake</a> (Windows, macOS, Linux) et ouvrez votre vidéo.</li>
-          <li>Préréglage : <b>General › Fast 1080p30</b>. Il produit du H.264 en MP4
-            avec son AAC, 1080p et 30 images/s au plus : le format du lecteur.</li>
-          <li>Onglet <b>Résumé</b> : format <b>MP4</b>, cochez <b>Optimisé pour le Web</b>.</li>
-          <li><b>Démarrer l'encodage</b>, puis envoyez le fichier .mp4 obtenu.</li>
+          <li data-i18n-html="prep.handbrake_1">Install <a href="https://handbrake.fr/" target="_blank"
+            rel="noopener">HandBrake</a> (Windows, macOS, Linux) and open your video.</li>
+          <li data-i18n-html="prep.handbrake_2">Preset: <b>General › Fast 1080p30</b>. It produces
+            H.264 in MP4 with AAC sound, 1080p and 30 frames/s at most: the player format.</li>
+          <li data-i18n-html="prep.handbrake_3"><b>Summary</b> tab: <b>MP4</b> format, tick
+            <b>Web Optimized</b>.</li>
+          <li data-i18n-html="prep.handbrake_4"><b>Start Encode</b>, then upload the .mp4 file
+            you get.</li>
         </ol>
       </details>
       <details>
-        <summary>Avec ffmpeg, en ligne de commande</summary>
-        <p class="hint">Installez <a href="https://ffmpeg.org/download.html"
-          target="_blank" rel="noopener">ffmpeg</a>, puis, dans un terminal, remplacez
-          <code>ma-video.mov</code> par votre fichier :</p>
+        <summary data-i18n="prep.ffmpeg">With ffmpeg, on the command line</summary>
+        <p class="hint" data-i18n-html="prep.ffmpeg_intro">Install <a href="https://ffmpeg.org/download.html"
+          target="_blank" rel="noopener">ffmpeg</a>, then, in a terminal, replace
+          <code>input.mov</code> with your file:</p>
         <div class="cmd">
           <pre id="prep-cmd"></pre>
-          <button class="btn" id="prep-copy">Copier</button>
+          <button class="btn" id="prep-copy" data-i18n="prep.copy">Copy</button>
         </div>
-        <p class="hint">Résultat : MP4, H.264, 1080p au plus, son AAC stéréo,
-          résolution et cadence d'origine conservées. Au-delà de 30 images/s en 1080p,
-          ajoutez <code>-r 30</code> avant <code>sortie.mp4</code> : le Pi 3 ne décode
-          pas plus vite.</p>
+        <p class="hint" data-i18n-html="prep.ffmpeg_result">Result: MP4, H.264, 1080p at most,
+          stereo AAC sound, original resolution and frame rate kept. Above 30 frames/s in 1080p,
+          add <code>-r 30</code> before <code>output.mp4</code>: the Pi 3 decodes no faster.</p>
       </details>
     </div>
     <div id="uploads"></div>
@@ -351,70 +360,78 @@
   </section>
 
   <section>
-    <h2>Nom et réseau</h2>
+    <h2 data-i18n="network.title">Name, language and network</h2>
     <div class="field">
-      <label for="name">Nom du lecteur</label>
+      <label for="name" data-i18n="network.name">Player name</label>
       <input class="text" id="name" maxlength="40" autocomplete="off"
-             placeholder="ex. Hall A, Stand 12, Salle Ève">
+             data-i18n-placeholder="network.name_placeholder">
     </div>
-    <p class="hint" id="name-hint" style="margin:-4px 0 18px"></p>
+    <p class="hint" id="name-hint" style="margin:-4px 0 12px"></p>
+    <div class="field">
+      <label for="screen-lang" data-i18n="network.screen_language">Screen language</label>
+      <select id="screen-lang"></select>
+    </div>
+    <p class="hint" style="margin:-4px 0 18px" data-i18n="network.screen_language_hint">Language
+      of the player's setup screen on the TV. The web interface follows each browser
+      (selector at the top of the page).</p>
     <div class="alert" id="net-error" hidden></div>
     <p class="netstate" id="net-status">…</p>
     <div class="seg" id="net-mode">
-      <button data-net="client">Wi-Fi du lieu</button>
-      <button data-net="ap">Point d'accès autonome</button>
+      <button data-net="client" data-i18n="network.mode_client">Venue Wi-Fi</button>
+      <button data-net="ap" data-i18n="network.mode_ap">Standalone access point</button>
     </div>
     <p class="hint" id="net-mode-hint" style="margin-top:-8px"></p>
 
-    <h3>Point d'accès du lecteur</h3>
+    <h3 data-i18n="network.ap_title">Player access point</h3>
     <div class="field">
-      <label for="ap-ssid">Nom du réseau</label>
+      <label for="ap-ssid" data-i18n="network.ap_ssid">Network name</label>
       <input class="text" id="ap-ssid" maxlength="32" autocomplete="off"
-             title="Vide : le nom du lecteur">
+             data-i18n-title="network.ap_ssid_title">
     </div>
     <div class="field">
-      <label for="ap-password">Mot de passe</label>
+      <label for="ap-password" data-i18n="network.ap_password">Password</label>
       <input class="text" id="ap-password" maxlength="63" autocomplete="off" spellcheck="false">
     </div>
-    <p class="hint">Diffusé en mode autonome, et en secours en mode Wi-Fi du lieu :
-      si aucun réseau n'est joignable pendant 90 s, le lecteur active ce point
-      d'accès (jusqu'au prochain redémarrage). Adresse du lecteur sur ce réseau :
-      <code>http://10.42.0.1:8080</code>. Nom et mot de passe sont aussi affichés
-      sur l'écran d'accueil.</p>
+    <p class="hint" data-i18n-html="network.ap_hint">Broadcast in standalone mode, and as a
+      fallback in venue Wi-Fi mode: if no network can be reached for 90 s, the player starts
+      this access point (until the next reboot). Address of the player on this network:
+      <code>http://10.42.0.1:8080</code>. The name and password are also shown on the setup
+      screen.</p>
 
-    <h3>Réseaux Wi-Fi mémorisés</h3>
+    <h3 data-i18n="network.saved_title">Saved Wi-Fi networks</h3>
     <table><tbody id="wifi-saved"></tbody></table>
     <div class="wifi-add">
       <div class="field">
-        <label for="wifi-ssid">Ajouter un réseau</label>
+        <label for="wifi-ssid" data-i18n="network.add">Add a network</label>
         <div class="row">
-          <input class="text" id="wifi-ssid" placeholder="Nom du réseau (SSID)" list="wifi-scan"
-                 maxlength="32" autocomplete="off">
+          <input class="text" id="wifi-ssid" list="wifi-scan" maxlength="32" autocomplete="off"
+                 data-i18n-placeholder="network.ssid_placeholder">
           <datalist id="wifi-scan"></datalist>
-          <button class="btn" id="wifi-search" title="Lister les réseaux visibles">Rechercher</button>
+          <button class="btn" id="wifi-search" data-i18n="network.search"
+                  data-i18n-title="network.search_title">Search</button>
         </div>
       </div>
       <div class="field">
-        <label for="wifi-password">Mot de passe</label>
+        <label for="wifi-password" data-i18n="network.wifi_password">Password</label>
         <div class="row">
           <input class="text" id="wifi-password" type="password" maxlength="63"
-                 placeholder="vide pour un réseau ouvert" autocomplete="new-password">
-          <button class="btn" id="wifi-add">Mémoriser</button>
+                 autocomplete="new-password" data-i18n-placeholder="network.wifi_password_placeholder">
+          <button class="btn" id="wifi-add" data-i18n="network.save">Save</button>
         </div>
       </div>
     </div>
-    <p class="hint">Le lecteur rejoint automatiquement le premier réseau mémorisé à
-      portée (mode Wi-Fi du lieu). Le câble Ethernet fonctionne dans les deux modes.</p>
-    <p style="margin:12px 0 0"><button class="btn" id="wifi-connect" hidden>Se connecter
-      maintenant à un réseau mémorisé</button></p>
+    <p class="hint" data-i18n="network.saved_hint">The player automatically joins the first
+      saved network in range (venue Wi-Fi mode). The Ethernet cable works in both modes.</p>
+    <p style="margin:12px 0 0"><button class="btn" id="wifi-connect" hidden
+      data-i18n="network.connect_now">Connect now to a saved network</button></p>
   </section>
 
   <section>
-    <h2>Système</h2>
+    <h2 data-i18n="system.title">System</h2>
     <div class="health" id="health"></div>
     <div class="system">
-      <button class="btn" id="reboot">Redémarrer le Pi</button>
-      <button class="btn danger" id="poweroff">Éteindre</button>
+      <button class="btn" id="reboot" data-i18n="system.reboot">Reboot the Pi</button>
+      <button class="btn danger" id="poweroff" data-i18n="system.poweroff">Power off</button>
     </div>
     <p class="hint" id="system-hint"></p>
   </section>
@@ -422,45 +439,86 @@
 
 <div class="savebar" id="savebar">
   <span class="errors" id="errors"></span>
-  <button class="btn" id="cancel">Annuler</button>
-  <button class="btn primary" id="save">Enregistrer et appliquer</button>
+  <button class="btn" id="cancel" data-i18n="save.cancel">Cancel</button>
+  <button class="btn primary" id="save" data-i18n="save.apply">Save and apply</button>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let saved = null;   // configuration enregistrée
-let cfg = null;     // configuration en cours d'édition
-let media = [], gpios = [], player = null, jobs = [], system = {};
-let net = { status: {}, saved: [], allowed: true };   // état du réseau
+let saved = null;   // saved configuration
+let cfg = null;     // configuration being edited
+let media = [], gpios = [], player = null, jobs = [], system = {}, languages = [];
+let net = { status: {}, saved: [], allowed: true };   // network state
 
-const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + " Go"
-  : b > 1e6 ? (b / 1e6).toFixed(0) + " Mo" : Math.ceil(b / 1e3) + " ko";
+// --- translations (locales/<lang>.json, English as fallback) -------------------
+
+let LANG = "en", STRINGS = {}, FALLBACK = {};
+
+// translated text; {name} placeholders filled from vars (nested messages too)
+function t(key, vars = {}) {
+  const text = STRINGS[key] ?? FALLBACK[key] ?? key;
+  return text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? tm(vars[k]) : m));
+}
+
+// text of a structured message from the server ({key, vars}) or of a string
+const tm = (m) => (m && typeof m === "object" && "key" in m ? t(m.key, m.vars || {})
+  : String(m ?? ""));
+
+function pickLanguage() {
+  const codes = languages.map((l) => l.code);
+  let stored = null;
+  try { stored = localStorage.getItem("lang"); } catch {}
+  for (const want of [stored, ...(navigator.languages || [navigator.language])]) {
+    const code = (want || "").toLowerCase().split("-")[0];
+    if (codes.includes(code)) return code;
+  }
+  return "en";
+}
+
+async function loadLanguage(lang) {
+  const get = async (code) => {
+    try { return await (await fetch(`/locales/${code}.json`)).json(); } catch { return {}; }
+  };
+  [FALLBACK, STRINGS] = await Promise.all([get("en"), lang === "en" ? {} : get(lang)]);
+  if (lang === "en") STRINGS = FALLBACK;
+  LANG = lang;
+  document.documentElement.lang = lang;
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+  // locale files are part of the project (reviewed like code): HTML allowed
+  for (const el of document.querySelectorAll("[data-i18n-html]")) el.innerHTML = t(el.dataset.i18nHtml);
+  for (const el of document.querySelectorAll("[data-i18n-placeholder]")) el.placeholder = t(el.dataset.i18nPlaceholder);
+  for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
+}
+
+const num = (n, digits = 0) => n.toLocaleString(LANG, { maximumFractionDigits: digits });
+const fmtSize = (b) => b > 1e9 ? t("unit.gb", { n: num(b / 1e9, 1) })
+  : b > 1e6 ? t("unit.mb", { n: num(b / 1e6) }) : t("unit.kb", { n: num(Math.ceil(b / 1e3)) });
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const dirty = () => JSON.stringify(cfg) !== JSON.stringify(saved);
 
 function toast(msg) {
-  const t = $("toast");
-  t.textContent = msg;
-  t.classList.add("show");
-  clearTimeout(t._h);
-  t._h = setTimeout(() => t.classList.remove("show"), 2500);
+  const el = $("toast");
+  el.textContent = tm(msg);
+  el.classList.add("show");
+  clearTimeout(el._h);
+  el._h = setTimeout(() => el.classList.remove("show"), 2500);
 }
 
 function fillSelect(sel, items, value, placeholder) {
   sel.innerHTML = "";
   if (placeholder) sel.add(new Option(placeholder, ""));
   for (const [val, label] of items) sel.add(new Option(label, val));
-  if (value && !items.some(([v]) => v === value)) sel.add(new Option(`${value} (manquant)`, value));
+  if (value && !items.some(([v]) => v === value)) sel.add(new Option(t("common.missing", { name: value }), value));
   sel.value = value ?? "";
 }
 
 const mediaOptions = (kinds) => media
   .filter((m) => kinds.includes(m.kind))
-  .map((m) => [m.name, m.kind === "image" ? `${m.name}  (image)` : m.name]);
+  .map((m) => [m.name, m.kind === "image" ? t("common.image_option", { name: m.name }) : m.name]);
 
-// --- rendu du formulaire ---------------------------------------------------
+// --- form rendering ---------------------------------------------------------
 
 function render() {
   for (const b of $("mode").children) b.classList.toggle("on", b.dataset.mode === cfg.mode);
@@ -471,13 +529,12 @@ function render() {
   $("loop-sound").checked = !cfg.loop.muted;
 
   const it = cfg.interactive;
-  fillSelect($("attract"), mediaOptions(["video", "image"]), it.attract, "— écran noir —");
+  fillSelect($("attract"), mediaOptions(["video", "image"]), it.attract, t("interactive.black_screen"));
   $("attract-sound").checked = !it.attract_muted;
   $("triggers-sound").checked = !it.triggers_muted;
   $("interruptible").checked = it.interruptible;
-  $("interruptible-hint").textContent = it.interruptible
-    ? "Pendant une vidéo, un nouvel appui lance immédiatement la vidéo du bouton pressé."
-    : "Pendant une vidéo, les appuis sont ignorés jusqu'au retour à l'accroche.";
+  $("interruptible-hint").textContent = t(it.interruptible
+    ? "interactive.interruptible_on" : "interactive.interruptible_off");
   $("wiring").value = it.active_low ? "low" : "high";
   renderTriggers();
   renderUdp();
@@ -485,8 +542,8 @@ function render() {
 
   $("volume").value = cfg.volume;
   $("volume-val").textContent = `(${cfg.volume} %)`;
-  const devices = (player?.audio_devices || []).map((d) => [d.name, d.description]);
-  if (!devices.length) devices.push(["auto", "Automatique"]);
+  const devices = (player?.audio_devices || []).map((d) => [d.name, tm(d.description)]);
+  if (!devices.length) devices.push(["auto", t("audio.auto")]);
   fillSelect($("audio-device"), devices, cfg.audio_device);
 
   $("sub-size").value = cfg.subtitle_style.size;
@@ -496,8 +553,8 @@ function render() {
   $("savebar").classList.toggle("show", dirty());
 }
 
-let dragFrom = null;   // index de l'entrée déplacée à la souris
-const IMAGE_DURATION = 6;   // s, comme common.IMAGE_DURATION
+let dragFrom = null;   // index of the entry being dragged
+const IMAGE_DURATION = 6;   // s, as common.IMAGE_DURATION
 const kindOf = (name) => media.find((m) => m.name === name)?.kind;
 
 function renderPlaylist() {
@@ -515,7 +572,7 @@ function renderPlaylist() {
     const grip = document.createElement("td");
     grip.className = "grip";
     grip.textContent = "⠿";
-    grip.title = "Glisser pour réordonner";
+    grip.title = t("playlist.drag");
     const num = document.createElement("td");
     num.className = "num";
     num.textContent = `${i + 1}.`;
@@ -527,14 +584,14 @@ function renderPlaylist() {
     const rep = document.createElement("label");
     rep.className = "repeat";
     if (single) {
-      rep.textContent = "∞ en boucle";
+      rep.textContent = t("playlist.forever");
     } else if (kindOf(it.media) === "image") {
-      // une image n'a pas de fin : elle reste affichée une durée donnée
+      // an image has no end: it stays on screen for a given time
       it.duration ??= IMAGE_DURATION;
       const input = document.createElement("input");
       input.type = "number"; input.min = 1; input.max = 3600; input.step = "any";
       input.value = it.duration;
-      input.title = "Durée d'affichage de l'image";
+      input.title = t("playlist.duration_title");
       input.onchange = () => {
         it.duration = Math.max(1, Math.min(3600, Math.round(+input.value * 10) / 10 || IMAGE_DURATION));
         render();
@@ -545,7 +602,7 @@ function renderPlaylist() {
       const input = document.createElement("input");
       input.type = "number"; input.min = 1; input.max = 999;
       input.value = it.repeat;
-      input.title = "Nombre de lectures d'affilée";
+      input.title = t("playlist.repeat_title");
       input.onchange = () => {
         it.repeat = Math.max(1, Math.min(999, Math.round(+input.value) || 1));
         render();
@@ -558,15 +615,15 @@ function renderPlaylist() {
       render();
     };
     const up = document.createElement("button");
-    up.className = "btn icon"; up.textContent = "↑"; up.title = "Monter";
+    up.className = "btn icon"; up.textContent = "↑"; up.title = t("playlist.up");
     up.disabled = i === 0;
     up.onclick = () => move(i - 1);
     const down = document.createElement("button");
-    down.className = "btn icon"; down.textContent = "↓"; down.title = "Descendre";
+    down.className = "btn icon"; down.textContent = "↓"; down.title = t("playlist.down");
     down.disabled = i === items.length - 1;
     down.onclick = () => move(i + 1);
     const del = document.createElement("button");
-    del.className = "btn danger"; del.textContent = "Retirer";
+    del.className = "btn danger"; del.textContent = t("common.remove");
     del.onclick = () => { items.splice(i, 1); render(); };
 
     const cells = [grip, num];
@@ -577,7 +634,7 @@ function renderPlaylist() {
     }
     tr.append(...cells);
 
-    // glisser-déposer : on saisit la ligne par la poignée
+    // drag and drop: the row is grabbed by its handle
     grip.onmousedown = grip.ontouchstart = () => { tr.draggable = true; };
     tr.ondragstart = (e) => {
       dragFrom = i; tr.classList.add("dragging");
@@ -607,22 +664,19 @@ function renderPlaylist() {
   });
 
   if (!items.length) {
-    body.innerHTML = `<tr><td colspan="5" class="empty">Playlist vide.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="5" class="empty"></td></tr>`;
+    body.querySelector("td").textContent = t("playlist.empty");
   }
   $("add-item").disabled = !mediaOptions(["video", "image"]).length;
   $("playlist-hint").textContent = !items.length ? ""
-    : single ? "Un seul média : il tourne en boucle sans fin, sans coupure. "
-      + "Ajoutez d'autres médias pour créer une playlist."
-    : "Les médias s'enchaînent dans l'ordre, puis la playlist recommence : chaque vidéo "
-      + "est répétée le nombre de fois indiqué (sans coupure entre deux répétitions), "
-      + "chaque image reste affichée la durée indiquée en secondes.";
+    : t(single ? "playlist.hint_single" : "playlist.hint_many");
 }
 
 $("add-item").onclick = () => {
   const items = cfg.loop.items;
   const choices = mediaOptions(["video", "image"]);
   if (!choices.length) return;
-  // propose de préférence un média pas encore dans la liste
+  // prefer a media not yet in the list
   const fresh = choices.find(([n]) => !items.some((it) => it.media === n)) || choices[0];
   items.push(kindOf(fresh[0]) === "image"
     ? { media: fresh[0], duration: IMAGE_DURATION } : { media: fresh[0], repeat: 1 });
@@ -632,51 +686,49 @@ $("add-item").onclick = () => {
 function renderTriggers() {
   const body = $("triggers");
   body.innerHTML = "";
-  const used = cfg.interactive.triggers.map((t) => t.gpio);
+  const used = cfg.interactive.triggers.map((tr) => tr.gpio);
   const videos = mediaOptions(["video"]);
 
-  cfg.interactive.triggers.forEach((t, i) => {
+  cfg.interactive.triggers.forEach((trig, i) => {
     const tr = document.createElement("tr");
     if (player?.state === "triggered" && player.trigger === i) tr.className = "playing";
 
     const gpioSel = document.createElement("select");
     const choices = gpios
-      .filter((g) => g.gpio === t.gpio || !used.includes(g.gpio))
-      .map((g) => [String(g.gpio), `GPIO${g.gpio} · broche ${g.pin}`]);
-    fillSelect(gpioSel, choices, t.gpio == null ? "" : String(t.gpio), "— aucune —");
-    gpioSel.onchange = () => { t.gpio = gpioSel.value === "" ? null : +gpioSel.value; render(); };
+      .filter((g) => g.gpio === trig.gpio || !used.includes(g.gpio))
+      .map((g) => [String(g.gpio), t("triggers.gpio_option", { gpio: g.gpio, pin: g.pin })]);
+    fillSelect(gpioSel, choices, trig.gpio == null ? "" : String(trig.gpio), t("triggers.none_f"));
+    gpioSel.onchange = () => { trig.gpio = gpioSel.value === "" ? null : +gpioSel.value; render(); };
 
     const udp = document.createElement("input");
     udp.className = "text";
-    udp.placeholder = "— aucun —";
+    udp.placeholder = t("triggers.none_m");
     udp.maxLength = 64;
-    udp.value = t.udp || "";
-    udp.onchange = () => { t.udp = udp.value.trim() || null; render(); };
+    udp.value = trig.udp || "";
+    udp.onchange = () => { trig.udp = udp.value.trim() || null; render(); };
 
     const mediaSel = document.createElement("select");
-    fillSelect(mediaSel, videos, t.media, "— choisir une vidéo —");
-    mediaSel.onchange = () => { t.media = mediaSel.value || null; render(); };
+    fillSelect(mediaSel, videos, trig.media, t("triggers.choose_video"));
+    mediaSel.onchange = () => { trig.media = mediaSel.value || null; render(); };
 
     const test = document.createElement("button");
     test.className = "btn";
-    test.textContent = "Tester";
-    test.title = t.udp && t.gpio == null
-      ? "Envoie le message UDP au lecteur (configuration enregistrée)"
-      : "Simule un appui (configuration enregistrée)";
-    test.disabled = dirty() || saved.mode !== "interactive" || !t.media;
+    test.textContent = t("triggers.test");
+    test.title = t(trig.udp && trig.gpio == null ? "triggers.test_udp" : "triggers.test_gpio");
+    test.disabled = dirty() || saved.mode !== "interactive" || !trig.media;
     test.onclick = async () => {
-      const r = t.gpio != null
-        ? await fetch(`/api/trigger/${t.gpio}`, { method: "POST" })
+      const r = trig.gpio != null
+        ? await fetch(`/api/trigger/${trig.gpio}`, { method: "POST" })
         : await fetch("/api/trigger-udp", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: t.udp }),
+            body: JSON.stringify({ message: trig.udp }),
           });
       if (!r.ok) toast((await r.json()).error);
     };
 
     const del = document.createElement("button");
     del.className = "btn danger";
-    del.textContent = "Retirer";
+    del.textContent = t("common.remove");
     del.onclick = () => { cfg.interactive.triggers.splice(i, 1); render(); };
 
     const cells = [gpioSel, udp, mediaSel, [test, del]];
@@ -689,13 +741,14 @@ function renderTriggers() {
   });
 
   if (!cfg.interactive.triggers.length) {
-    body.innerHTML = `<tr><td colspan="4" class="empty">Aucun déclencheur configuré.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="4" class="empty"></td></tr>`;
+    body.querySelector("td").textContent = t("triggers.empty");
   }
 }
 
 function renderUdp() {
   $("udp-port").value = cfg.udp_port;
-  const host = location.hostname || "<adresse-du-pi>";
+  const host = location.hostname || "<pi-address>";
   $("udp-example").textContent = `echo -n pause | nc -u -w1 ${host} ${cfg.udp_port}`;
   renderUdpStatus();
 }
@@ -704,23 +757,24 @@ function renderUdpStatus() {
   const udp = player?.udp;
   const box = $("udp-last");
   if (udp?.error) {
-    box.textContent = "⚠ " + udp.error;
+    box.textContent = "⚠ " + tm(udp.error);
   } else if (udp?.last) {
-    const when = new Date(udp.last.time * 1000).toLocaleTimeString();
-    box.textContent = `Dernier message : « ${udp.last.message} » de ${udp.last.from} `
-      + `à ${when} → ${udp.last.action}`;
+    box.textContent = t("udp.last", {
+      message: udp.last.message, from: udp.last.from, action: udp.last.action,
+      time: new Date(udp.last.time * 1000).toLocaleTimeString(LANG),
+    });
   } else {
-    box.textContent = udp?.port ? `En écoute sur le port ${udp.port}, aucun message reçu.` : "";
+    box.textContent = udp?.port ? t("udp.listening", { port: udp.port }) : "";
   }
 }
 
 function subtitleSelect(video) {
   const label = document.createElement("label");
   label.className = "subsel";
-  label.textContent = "Sous-titres :";
+  label.textContent = t("library.subtitles");
   const sel = document.createElement("select");
   const subs = media.filter((m) => m.kind === "subtitle").map((m) => [m.name, m.name]);
-  fillSelect(sel, subs, cfg.subtitles[video] || "", "aucun");
+  fillSelect(sel, subs, cfg.subtitles[video] || "", t("library.subtitles_none"));
   sel.disabled = !subs.length && !cfg.subtitles[video];
   sel.onchange = () => {
     if (sel.value) cfg.subtitles[video] = sel.value;
@@ -731,13 +785,13 @@ function subtitleSelect(video) {
   return label;
 }
 
-// Associe automatiquement un .srt envoyé à la vidéo du même nom (à enregistrer)
+// Link an uploaded .srt to the video with the same name (to be saved)
 function autoAssociate(subName) {
   const stem = subName.replace(/\.[^.]+$/, "");
   const video = media.find((m) => m.kind === "video" && m.name.replace(/\.[^.]+$/, "") === stem);
   if (video && !cfg.subtitles[video.name]) {
     cfg.subtitles[video.name] = subName;
-    toast(`${subName} associé à ${video.name} : pensez à enregistrer`);
+    toast(t("library.subtitles_linked", { subtitles: subName, video: video.name }));
   }
 }
 
@@ -745,7 +799,8 @@ function renderMedia() {
   const body = $("media");
   body.innerHTML = "";
   if (!media.length) {
-    body.innerHTML = `<tr><td class="empty">Aucun média. Ajoutez une vidéo ou une image.</td></tr>`;
+    body.innerHTML = `<tr><td class="empty"></td></tr>`;
+    body.querySelector("td").textContent = t("library.empty");
     return;
   }
   for (const m of media) {
@@ -755,21 +810,20 @@ function renderMedia() {
     if (m.width) info.push(`${m.width}×${m.height}`);
     if (m.kind === "video" && m.codec) info.push(m.codec);
     if (m.duration) info.push(fmtTime(m.duration));
-    if (m.kind === "video") info.push(m.audio ? "avec son" : "sans piste audio");
-    if (m.kind === "subtitle") info.push(`${m.cues} répliques`);
+    if (m.kind === "video") info.push(t(m.audio ? "library.with_sound" : "library.no_sound"));
+    if (m.kind === "subtitle") info.push(t("library.cues", { count: m.cues }));
     info.push(fmtSize(m.size));
 
     const td = document.createElement("td");
     td.innerHTML = `<span class="kind"></span> <span class="name"></span>
       <div class="info"></div>`;
-    td.querySelector(".kind").textContent =
-      { video: "VIDÉO", image: "IMAGE", subtitle: "SOUS-TITRES" }[m.kind];
+    td.querySelector(".kind").textContent = t(`library.kind_${m.kind}`);
     td.querySelector(".name").textContent = m.name;
     td.querySelector(".info").textContent = info.join(" · ");
     for (const w of m.warnings) {
       const d = document.createElement("div");
       d.className = "warn";
-      d.textContent = "⚠ " + w;
+      d.textContent = "⚠ " + tm(w);
       td.append(d);
     }
     if (m.kind === "video") td.append(subtitleSelect(m.name));
@@ -778,7 +832,7 @@ function renderMedia() {
     act.className = "actions";
     const del = document.createElement("button");
     del.className = "btn danger";
-    del.textContent = "Supprimer";
+    del.textContent = t("library.delete");
     del.onclick = () => deleteMedia(m.name);
     act.append(del);
     tr.append(td, act);
@@ -786,7 +840,7 @@ function renderMedia() {
   }
 }
 
-// --- évènements du formulaire -----------------------------------------------
+// --- form events ---------------------------------------------------------------
 
 $("mode").onclick = (e) => {
   if (e.target.dataset.mode) { cfg.mode = e.target.dataset.mode; render(); }
@@ -801,10 +855,11 @@ bind("wiring", (el) => cfg.interactive.active_low = el.value === "low");
 bind("audio-device", (el) => cfg.audio_device = el.value);
 bind("sub-size", (el) => cfg.subtitle_style.size = el.value);
 bind("sub-background", (el) => cfg.subtitle_style.background = el.checked);
+bind("screen-lang", (el) => cfg.language = el.value);
 $("volume").oninput = (e) => { cfg.volume = +e.target.value; render(); };
 
 $("add-trigger").onclick = () => {
-  const used = cfg.interactive.triggers.map((t) => t.gpio);
+  const used = cfg.interactive.triggers.map((tr) => tr.gpio);
   const free = gpios.find((g) => !used.includes(g.gpio));
   cfg.interactive.triggers.push({ gpio: free ? free.gpio : null, udp: null, media: null });
   render();
@@ -815,41 +870,40 @@ $("cancel").onclick = () => { cfg = clone(saved); $("errors").textContent = ""; 
 
 $("save").onclick = async () => {
   if (cfg.network.mode !== saved.network.mode && !confirm(cfg.network.mode === "ap"
-    ? "Passer en point d'accès autonome ? Le lecteur quitte le Wi-Fi du lieu : "
-      + `rejoignez ensuite le réseau « ${apSsidOf(cfg)} » puis ouvrez http://10.42.0.1:8080.`
-    : "Passer en Wi-Fi du lieu ? Le lecteur arrête son point d'accès et rejoint un réseau "
-      + "mémorisé : vous serez déconnecté. Si aucun n'est joignable, le point d'accès "
-      + "revient sous 2 minutes.")) return;
+    ? t("confirm.to_ap", { ssid: apSsidOf(cfg) }) : t("confirm.to_client"))) return;
   const apActive = ["ap", "fallback"].includes(net.status?.state);
   if (apActive && cfg.network.mode === saved.network.mode
       && (apSsidOf(cfg) !== apSsidOf(saved)
           || cfg.network.ap_password !== saved.network.ap_password)
-      && !confirm("Le point d'accès redémarre avec le nouveau nom ou mot de passe : "
-        + "les appareils connectés sont coupés et devront le rejoindre à nouveau.")) return;
+      && !confirm(t("confirm.ap_restart"))) return;
   const r = await fetch("/api/config", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cfg),
   });
   const data = await r.json();
-  if (!r.ok) { $("errors").textContent = data.errors.join(" · "); return; }
+  if (!r.ok) { $("errors").textContent = data.errors.map(tm).join(" · "); return; }
   $("errors").textContent = "";
   await load();
-  toast(data.hostname ? `Lecteur renommé : http://${data.hostname}.local:8080`
-    : "Configuration appliquée");
+  toast(data.hostname ? t("save.renamed", { host: data.hostname }) : t("save.applied"));
   if (data.hostname && location.hostname.endsWith(".local")) {
-    // l'ancienne adresse .local disparaît : on suit le nouveau nom
+    // the old .local address goes away: follow the new name
     setTimeout(() => {
       location.href = `${location.protocol}//${data.hostname}.local:${location.port}/`;
     }, 5000);
   }
 };
 
-// --- médiathèque ---------------------------------------------------------------
+// --- media library ---------------------------------------------------------------
 
 async function deleteMedia(name) {
-  if (!confirm(`Supprimer « ${name} » ?`)) return;
+  if (!confirm(t("library.delete_confirm", { name }))) return;
   const r = await fetch(`/api/media/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!r.ok) { toast((await r.json()).error); return; }
+  if (!r.ok) {
+    const data = await r.json();
+    toast(data.uses ? t("media.error.in_use", { uses: data.uses.map(tm).join(", ") })
+      : data.error);
+    return;
+  }
   await refreshMedia();
 }
 
@@ -868,9 +922,9 @@ function upload(file) {
     };
     xhr.onloadend = () => {
       if (xhr.status !== 200) {
-        let msg = "échec de l'envoi";
-        try { msg = JSON.parse(xhr.responseText).error; } catch {}
-        toast(`${file.name} : ${msg}`);
+        let msg = t("library.upload_failed");
+        try { msg = tm(JSON.parse(xhr.responseText).error); } catch {}
+        toast(`${file.name}: ${msg}`);
       }
       row.remove();
       refreshMedia().then(() => {
@@ -891,22 +945,24 @@ async function uploadAll(files) {
 
 // --- conversions ---------------------------------------------------------------
 
-const fmtEta = (s) => s < 60 ? `${Math.max(1, Math.round(s))} s`
-  : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")}`;
+const fmtEta = (s) => s < 60 ? t("jobs.eta_seconds", { s: Math.max(1, Math.round(s)) })
+  : t("jobs.eta_minutes", { m: Math.floor(s / 60), s: String(Math.round(s % 60)).padStart(2, "0") });
 
 function jobLabel(j) {
+  const reasons = j.reasons.map(tm).join(", ");
   switch (j.state) {
-    case "queued": return "En attente de conversion";
-    case "analyzing": return "Analyse…";
+    case "queued": return t("jobs.queued");
+    case "analyzing": return t("jobs.analyzing");
     case "converting": {
       const pct = Math.floor(j.progress * 100);
-      const why = j.reasons.length ? ` (${j.reasons.join(", ")})` : "";
-      return `Conversion ${pct} %` + (j.eta != null ? ` · reste ~${fmtEta(j.eta)}` : "") + why;
+      return t("jobs.converting", { pct })
+        + (j.eta != null ? " · " + t("jobs.eta", { eta: fmtEta(j.eta) }) : "")
+        + (reasons ? ` (${reasons})` : "");
     }
-    case "done": return j.reasons.length && j.reasons[0] !== "conteneur ou audio à adapter"
-      ? `Converti (${j.reasons.join(", ")}) · prêt`
-      : j.reasons.length ? "Adapté sans réencodage · prêt" : "Déjà optimal · prêt";
-    case "error": return `Échec : ${j.error}`;
+    case "done": return j.reasons.length && j.reasons[0]?.key !== "job.reason.remux"
+      ? t("jobs.done_converted", { reasons })
+      : t(j.reasons.length ? "jobs.done_remuxed" : "jobs.done_optimal");
+    case "error": return t("jobs.failed", { error: j.error });
   }
   return j.state;
 }
@@ -931,9 +987,9 @@ function renderJobs() {
     const btn = document.createElement("button");
     btn.className = "btn";
     const active = !["done", "error"].includes(j.state);
-    btn.textContent = active ? "Annuler" : "Masquer";
+    btn.textContent = t(active ? "jobs.cancel" : "jobs.hide");
     btn.onclick = async () => {
-      if (active && !confirm(`Annuler la conversion de « ${j.original} » ?`)) return;
+      if (active && !confirm(t("jobs.cancel_confirm", { name: j.original }))) return;
       await fetch(`/api/jobs/${j.id}`, { method: "DELETE" });
       poll();
     };
@@ -942,7 +998,7 @@ function renderJobs() {
     if (j.state === "error") {
       const retry = document.createElement("button");
       retry.className = "btn";
-      retry.textContent = "Réessayer";
+      retry.textContent = t("jobs.retry");
       retry.onclick = async () => {
         await fetch(`/api/jobs/${j.id}/retry`, { method: "POST" });
         poll();
@@ -960,7 +1016,7 @@ async function refreshMedia() {
   media = data.media;
   gpios = data.gpios;
   jobs = data.jobs;
-  render();   // conserve les modifications en cours du formulaire
+  render();   // keeps the form changes in progress
   renderMedia();
   renderJobs();
 }
@@ -975,13 +1031,7 @@ drop.ondrop = (e) => {
   uploadAll([...e.dataTransfer.files]);
 };
 
-// --- état du lecteur ---------------------------------------------------------
-
-const STATE_LABEL = {
-  loop: "Playlist", attract: "Accroche", triggered: "Vidéo déclenchée",
-  idle: "Écran noir", setup: "Écran d'accueil (rien de programmé)",
-  boot: "Démarrage",
-};
+// --- player state ---------------------------------------------------------------
 
 function renderStatus() {
   $("dot").classList.toggle("off", !player);
@@ -989,31 +1039,31 @@ function renderStatus() {
   const bar = $("progress");
   if (!player) {
     $("transport").hidden = true;
-    now.textContent = "Lecteur arrêté";
+    now.textContent = t("state.stopped");
     bar.hidden = true;
     $("player-error").hidden = true;
     return;
   }
   now.innerHTML = "";
-  now.append(STATE_LABEL[player.state] || player.state);
+  now.append(t(`state.${player.state}`));
   if (player.media) {
     const b = document.createElement("b");
     b.textContent = player.media + (player.source ? ` (${player.source})` : "");
     const pl = player.playlist;
     if (pl) now.append(` ${pl.index + 1}/${pl.count}`);
-    now.append(" : ", b);
+    now.append(": ", b);
     if (pl && pl.repeat > 1) now.append(` · ${pl.pass}/${pl.repeat}`);
   }
-  if (player.paused) now.append(" · en pause");
+  if (player.paused) now.append(" · " + t("state.paused"));
   const playing = ["loop", "attract", "triggered"].includes(player.state) && player.media;
   $("transport").hidden = !playing;
-  $("pause").textContent = player.paused ? "▶ Reprendre" : "⏸ Pause";
+  $("pause").textContent = t(player.paused ? "transport.resume" : "transport.pause");
   const showBar = (player.state === "triggered" || player.playlist) && player.duration;
   bar.hidden = !showBar;
   if (showBar) bar.firstChild.style.width = `${(player.position / player.duration) * 100}%`;
 
   $("player-error").hidden = !player.last_error;
-  $("player-error").textContent = player.last_error || "";
+  $("player-error").textContent = tm(player.last_error);
 }
 
 async function load() {
@@ -1025,6 +1075,9 @@ async function load() {
   saved = data.config;
   cfg = clone(saved);
   system = data.system || {};
+  languages = data.languages || [];
+  if (!Object.keys(FALLBACK).length) await loadLanguage(pickLanguage());
+  renderLanguages();
   renderSystem();
   $("prep").hidden = !system.slow_transcode;
   loadNetwork();
@@ -1044,15 +1097,15 @@ async function poll() {
     jobs = data.jobs;
     renderHealth(data.health);
     if (data.network) { net.status = data.network; renderNetStatus(); }
-    if (offline && player && !dirty()) load();   // retour après un redémarrage
+    if (offline && player && !dirty()) load();   // back after a reboot
     renderStatus();
     renderJobs();
     renderUdpStatus();
     if (jobs.filter((j) => j.state === "done").map((j) => j.id).join() !== doneBefore) {
-      refreshMedia();   // une vidéo convertie vient d'arriver dans la médiathèque
+      refreshMedia();   // a converted video just arrived in the library
     }
     if (prev !== JSON.stringify([player?.state, player?.media, player?.trigger, player?.playlist?.index])) {
-      // pas pendant une saisie : le champ en cours serait effacé
+      // not while typing: the field being edited would be cleared
       const editing = (id) => $(id).contains(document.activeElement);
       if (cfg && !editing("playlist")) renderPlaylist();
       if (cfg && !editing("triggers")) renderTriggers();
@@ -1064,7 +1117,7 @@ async function poll() {
   }
 }
 
-// --- commandes de lecture et système ---------------------------------------------
+// --- playback and system commands ---------------------------------------------
 
 $("pause").onclick = async () => {
   const r = await fetch("/api/player/pause", {
@@ -1077,13 +1130,14 @@ $("pause").onclick = async () => {
 
 $("restart").onclick = async () => {
   const r = await fetch("/api/player/restart", { method: "POST" });
-  toast(r.ok ? "Lecture relancée depuis le début" : (await r.json()).error);
+  toast(r.ok ? t("transport.restarted") : (await r.json()).error);
   poll();
 };
 
 const fmtUptime = (s) => {
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-  return d ? `${d} j ${h} h` : h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`;
+  return d ? t("uptime.days", { d, h }) : h ? t("uptime.hours", { h, m: String(m).padStart(2, "0") })
+    : t("uptime.minutes", { m });
 };
 
 function renderHealth(h) {
@@ -1091,53 +1145,56 @@ function renderHealth(h) {
   box.innerHTML = "";
   if (!h) return;
   const tile = (label, value, sub, level) => {
-    const t = document.createElement("div");
-    t.className = `tile ${level || ""}`;
-    t.innerHTML = `<div class="label"></div><div class="value"></div><div class="sub"></div>`;
-    t.children[0].textContent = label;
-    t.children[1].textContent = value;
-    t.children[2].textContent = sub || "";
-    box.append(t);
+    const el = document.createElement("div");
+    el.className = `tile ${level || ""}`;
+    el.innerHTML = `<div class="label"></div><div class="value"></div><div class="sub"></div>`;
+    el.children[0].textContent = label;
+    el.children[1].textContent = value;
+    el.children[2].textContent = sub || "";
+    box.append(el);
   };
   if (h.temp != null) {
-    // le Pi 3 ralentit vers 80 °C (60 °C sous alimentation insuffisante)
-    tile("Température", `${h.temp.toFixed(0)} °C`,
-      h.temp >= 80 ? "trop chaud : ralentissement" : h.temp >= 70 ? "chaud" : "normale",
+    // the Pi 3 throttles around 80 °C (60 °C with an insufficient power supply)
+    tile(t("health.temp"), `${num(h.temp)} °C`,
+      t(h.temp >= 80 ? "health.temp_hot" : h.temp >= 70 ? "health.temp_warm" : "health.temp_ok"),
       h.temp >= 80 ? "err" : h.temp >= 70 ? "warn" : "");
   }
   if (h.power) {
+    const flags = (codes) => codes.map((c) => t(`health.flag.${c}`)).join(", ");
     const now = h.power.now, past = h.power.since_boot;
-    tile("Alimentation et fréquence",
-      now.length ? "Problème" : past.length ? "À surveiller" : "OK",
-      now.length ? now.join(", ") : past.length ? `depuis le démarrage : ${past.join(", ")}`
-        : "aucun ralentissement",
+    tile(t("health.power"),
+      t(now.length ? "health.power_problem" : past.length ? "health.power_watch" : "health.power_ok"),
+      now.length ? flags(now) : past.length ? t("health.power_since_boot", { flags: flags(past) })
+        : t("health.power_none"),
       now.length ? "err" : past.length ? "warn" : "");
   }
   const d = h.disk;
-  tile("Carte SD", `${fmtSize(d.free)} libres`, `sur ${fmtSize(d.total)}`,
+  tile(t("health.disk"), t("health.free", { size: fmtSize(d.free) }),
+    t("health.of", { size: fmtSize(d.total) }),
     d.free < 5e8 ? "err" : d.free < 2e9 ? "warn" : "");
   if (h.memory) {
-    tile("Mémoire", `${fmtSize(h.memory.available)} dispo`, `sur ${fmtSize(h.memory.total)}`,
+    tile(t("health.memory"), t("health.available", { size: fmtSize(h.memory.available) }),
+      t("health.of", { size: fmtSize(h.memory.total) }),
       h.memory.available < 5e7 ? "err" : h.memory.available < 1e8 ? "warn" : "");
   }
-  tile("Charge processeur", `${Math.round(h.load / h.cpus * 100)} %`,
-    `moyenne sur 1 min (${h.cpus} cœurs)`, h.load / h.cpus > 0.9 ? "warn" : "");
-  if (h.uptime != null) tile("Allumé depuis", fmtUptime(h.uptime));
+  tile(t("health.load"), `${Math.round(h.load / h.cpus * 100)} %`,
+    t("health.load_sub", { cpus: h.cpus }), h.load / h.cpus > 0.9 ? "warn" : "");
+  if (h.uptime != null) tile(t("health.uptime"), fmtUptime(h.uptime));
 }
 
-// commande de préparation des vidéos (Pi 3) : produit exactement ce que le
-// lecteur range sans conversion (voir transcode.plan)
-const PREP_CMD = 'ffmpeg -i ma-video.mov -vf "yadif=deint=interlaced,'
+// video preparation command (Pi 3): produces exactly what the player stores
+// without conversion (see transcode.plan)
+const PREP_CMD = 'ffmpeg -i input.mov -vf "yadif=deint=interlaced,'
   + "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease"
   + ':force_divisible_by=2,format=yuv420p" -c:v libx264 -preset medium -crf 20'
-  + ' -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart sortie.mp4';
+  + ' -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart output.mp4';
 
 $("prep-cmd").textContent = PREP_CMD;
 $("prep-copy").onclick = async () => {
   try {
-    await navigator.clipboard.writeText(PREP_CMD);   // https ou localhost seulement
+    await navigator.clipboard.writeText(PREP_CMD);   // https or localhost only
   } catch {
-    // adresse http du lecteur : copie par sélection
+    // http address of the player: copy through a selection
     const area = document.createElement("textarea");
     area.value = PREP_CMD;
     document.body.append(area);
@@ -1145,15 +1202,12 @@ $("prep-copy").onclick = async () => {
     document.execCommand("copy");
     area.remove();
   }
-  toast("Commande copiée");
+  toast(t("prep.copied"));
 };
 
 function renderSystem() {
   $("reboot").disabled = $("poweroff").disabled = !system.power;
-  $("system-hint").textContent = system.power
-    ? "Éteignez le Pi avant de couper l'alimentation : la carte SD ne risque rien."
-    : "Indisponible : relancez l'installateur (sudo ./install.sh) pour autoriser "
-      + "le redémarrage et l'extinction depuis cette page.";
+  $("system-hint").textContent = t(system.power ? "system.hint" : "system.unavailable");
 }
 
 async function power(action, question, done) {
@@ -1162,14 +1216,11 @@ async function power(action, question, done) {
   toast(r.ok ? done : (await r.json()).error);
 }
 
-$("reboot").onclick = () => power("reboot",
-  "Redémarrer le Pi ? La lecture s'interrompt environ une minute.",
-  "Redémarrage… la page se reconnectera toute seule");
-$("poweroff").onclick = () => power("poweroff",
-  "Éteindre le Pi ? Il faudra couper puis remettre l'alimentation pour le rallumer.",
-  "Extinction… vous pourrez couper l'alimentation dans quelques secondes");
+$("reboot").onclick = () => power("reboot", t("system.reboot_confirm"), t("system.rebooting"));
+$("poweroff").onclick = () => power("poweroff", t("system.poweroff_confirm"),
+  t("system.powering_off"));
 
-// --- réseau ---------------------------------------------------------------------
+// --- network ---------------------------------------------------------------------
 
 async function loadNetwork() {
   try {
@@ -1178,7 +1229,7 @@ async function loadNetwork() {
   renderNetwork();
 }
 
-// nom d'hôte tiré du nom du lecteur (comme common.hostname_for)
+// hostname derived from the player name (as common.hostname_for)
 const hostnameFor = (name) => name.normalize("NFKD").replace(/[^\x00-\x7f]/g, "")
   .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
   .slice(0, 63).replace(/-+$/, "") || "darksign";
@@ -1192,50 +1243,55 @@ function ssidOf(connection) {
 function renderNetStatus() {
   const st = net.status || {};
   const box = $("net-status");
-  const ap = apSsidOf(saved);
   const others = (st.addresses || []).filter((a) => a !== st.address);
-  const extra = others.length ? ` · aussi ${others.join(", ")}` : "";
-  const html = (s) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const html = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  // translated sentence with <b> around the network name (values escaped)
+  const bold = (key, vars) => {
+    const safe = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, html(v)]));
+    return t(key, safe).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  };
+  const extra = others.length ? " · " + html(t("network.also", { addresses: others.join(", ") })) : "";
   if (st.state === "client") {
-    box.innerHTML = `Connecté au Wi-Fi <b>« ${html(ssidOf(st.connection))} »</b>`
-      + ` · ${html(st.address || "…")}${html(extra)}`;
+    box.innerHTML = bold("network.state_client", { ssid: ssidOf(st.connection), address: st.address || "…" }) + extra;
   } else if (st.state === "ap") {
-    box.innerHTML = `Point d'accès <b>« ${html(ap || "")} »</b> actif · ${html(st.address || "")}`
-      + html(extra);
+    box.innerHTML = bold("network.state_ap", { ssid: apSsidOf(saved), address: st.address || "" }) + extra;
   } else if (st.state === "fallback") {
-    box.innerHTML = `Aucun réseau joignable : point d'accès de secours <b>« ${html(ap || "")} »</b>`
-      + ` actif · ${html(st.address || "")}${html(extra)}`;
+    box.innerHTML = bold("network.state_fallback", { ssid: apSsidOf(saved), address: st.address || "" }) + extra;
   } else if (st.state === "disconnected") {
-    box.innerHTML = `Wi-Fi non connecté${html(extra.replace(" · aussi", " · câble :"))}`
-      + (st.fallback_in != null ? ` · point d'accès de secours dans ${st.fallback_in} s` : "");
+    box.innerHTML = html(t("network.state_disconnected"))
+      + (others.length || st.addresses?.length
+        ? " · " + html(t("network.cable", { addresses: (st.addresses || []).join(", ") })) : "")
+      + (st.fallback_in != null ? " · " + html(t("network.fallback_in", { s: st.fallback_in })) : "");
   } else {
-    box.textContent = "État du réseau inconnu";
+    box.textContent = t("network.state_unknown");
   }
-  const err = st.error || (!net.allowed ? "Gestion du réseau indisponible : relancez "
-    + "l'installateur (sudo ./install.sh) pour l'autoriser." : "");
+  const err = st.error ? tm(st.error) : !net.allowed ? t("network.unavailable") : "";
   $("net-error").hidden = !err;
   $("net-error").textContent = err;
   $("wifi-connect").hidden = !(saved?.network?.mode === "client"
     && ["fallback", "disconnected"].includes(st.state) && net.saved.length);
 }
 
+function renderLanguages() {
+  const items = languages.map((l) => [l.code, l.name]);
+  fillSelect($("lang"), items, LANG);
+}
+
 function renderNetwork() {
   if (!cfg) return;
   const n = cfg.network;
   for (const b of $("net-mode").children) b.classList.toggle("on", b.dataset.net === n.mode);
-  $("net-mode-hint").textContent = n.mode === "ap"
-    ? "Le lecteur crée son propre réseau Wi-Fi, sans box ni routeur : idéal en événementiel."
-    : "Le lecteur rejoint un des réseaux Wi-Fi mémorisés ci-dessous.";
+  $("net-mode-hint").textContent = t(n.mode === "ap" ? "network.mode_ap_hint" : "network.mode_client_hint");
   if (document.activeElement !== $("ap-ssid")) $("ap-ssid").value = n.ap_ssid || "";
   $("ap-ssid").placeholder = nameOf(cfg);
   if (document.activeElement !== $("name")) $("name").value = cfg.name || "";
   $("name").placeholder = system.hostname || "";
   $("name").disabled = !system.rename;
+  fillSelect($("screen-lang"), languages.map((l) => [l.code, l.name]), cfg.language);
   const host = cfg.name ? hostnameFor(cfg.name) : system.hostname;
-  $("name-hint").textContent = !system.rename
-    ? "Changement de nom indisponible : relancez l'installateur (sudo ./install.sh)."
-    : `Adresse : http://${host}.local:8080 · Wi-Fi du point d'accès : « ${apSsidOf(cfg)} »`
-      + (cfg.name && host !== system.hostname ? " (appliqué à l'enregistrement)" : "");
+  $("name-hint").textContent = !system.rename ? t("network.rename_unavailable")
+    : t("network.name_hint", { host, ssid: apSsidOf(cfg) })
+      + (cfg.name && host !== system.hostname ? " " + t("network.applied_on_save") : "");
   $("pname").textContent = nameOf(saved);
   document.title = nameOf(saved) ? `${nameOf(saved)} — DarkSign` : "DarkSign";
   if (document.activeElement !== $("ap-password")) $("ap-password").value = n.ap_password || "";
@@ -1249,17 +1305,17 @@ function renderNetwork() {
     if (net.status?.state === "client" && net.status.connection === w.name) {
       const b = document.createElement("span");
       b.className = "badge";
-      b.textContent = "connecté";
+      b.textContent = t("network.connected");
       name.append(b);
     }
     const act = document.createElement("td");
     act.className = "actions";
     const del = document.createElement("button");
     del.className = "btn danger";
-    del.textContent = "Oublier";
+    del.textContent = t("network.forget");
     del.disabled = !net.allowed;
     del.onclick = async () => {
-      if (!confirm(`Oublier le réseau « ${w.ssid} » ?`)) return;
+      if (!confirm(t("network.forget_confirm", { ssid: w.ssid }))) return;
       const r = await fetch(`/api/network/wifi/${encodeURIComponent(w.name)}`,
                             { method: "DELETE" });
       if (!r.ok) toast((await r.json()).error);
@@ -1270,7 +1326,8 @@ function renderNetwork() {
     body.append(tr);
   }
   if (!net.saved.length) {
-    body.innerHTML = `<tr><td class="empty">Aucun réseau Wi-Fi mémorisé.</td></tr>`;
+    body.innerHTML = `<tr><td class="empty"></td></tr>`;
+    body.querySelector("td").textContent = t("network.saved_empty");
   }
   for (const id of ["wifi-search", "wifi-add", "ap-ssid", "ap-password"]) {
     $(id).disabled = !net.allowed;
@@ -1289,7 +1346,7 @@ $("ap-password").onchange = (e) => { cfg.network.ap_password = e.target.value; r
 $("wifi-search").onclick = async () => {
   const btn = $("wifi-search");
   btn.disabled = true;
-  btn.textContent = "Recherche…";
+  btn.textContent = t("network.searching");
   try {
     const data = await (await fetch("/api/network/scan")).json();
     if (data.error) { toast(data.error); return; }
@@ -1298,23 +1355,23 @@ $("wifi-search").onclick = async () => {
     for (const w of data.result) {
       const o = document.createElement("option");
       o.value = w.ssid;
-      o.label = `${w.signal} %${w.secure ? " · protégé" : " · ouvert"}`;
+      o.label = t(w.secure ? "network.scan_secure" : "network.scan_open", { signal: w.signal });
       list.append(o);
     }
-    toast(data.result.length ? `${data.result.length} réseau(x) trouvé(s) : choisissez dans la liste`
-      : "Aucun réseau visible");
+    toast(data.result.length ? t("network.found", { count: data.result.length })
+      : t("network.found_none"));
     $("wifi-ssid").focus();
   } catch {
-    toast("Recherche impossible");
+    toast(t("network.search_failed"));
   } finally {
     btn.disabled = !net.allowed;
-    btn.textContent = "Rechercher";
+    btn.textContent = t("network.search");
   }
 };
 
 $("wifi-add").onclick = async () => {
   const ssid = $("wifi-ssid").value.trim();
-  if (!ssid) { toast("Indiquez le nom du réseau"); return; }
+  if (!ssid) { toast(t("network.ssid_required")); return; }
   const r = await fetch("/api/network/wifi", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ssid, password: $("wifi-password").value }),
@@ -1322,26 +1379,35 @@ $("wifi-add").onclick = async () => {
   const data = await r.json();
   if (!r.ok) { toast(data.error); return; }
   $("wifi-ssid").value = $("wifi-password").value = "";
-  toast(`Réseau « ${ssid} » mémorisé`);
+  toast(t("network.saved_network", { ssid }));
   loadNetwork();
 };
 
 $("wifi-connect").onclick = async () => {
-  if (!confirm("Le lecteur va quitter son point d'accès pour rejoindre un réseau mémorisé : "
-    + "vous serez déconnecté. Si aucun réseau n'est joignable, le point d'accès revient "
-    + "sous 2 minutes.")) return;
+  if (!confirm(t("confirm.connect_now"))) return;
   await fetch("/api/network/connect", { method: "POST" });
-  toast("Connexion en cours…");
+  toast(t("network.connecting"));
 };
 
-// --- thème ----------------------------------------------------------------------
+// --- language and theme ---------------------------------------------------------
+
+$("lang").onchange = async (e) => {
+  try { localStorage.setItem("lang", e.target.value); } catch {}
+  await loadLanguage(e.target.value);
+  renderLanguages();
+  renderSystem();
+  render();
+  renderJobs();
+  renderStatus();
+  poll();
+};
 
 $("theme").value = document.documentElement.dataset.theme || "auto";
 $("theme").onchange = (e) => {
-  const t = e.target.value;
-  if (t === "auto") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = t;
-  try { t === "auto" ? localStorage.removeItem("theme") : localStorage.setItem("theme", t); }
+  const theme = e.target.value;
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  try { theme === "auto" ? localStorage.removeItem("theme") : localStorage.setItem("theme", theme); }
   catch {}
 };
 

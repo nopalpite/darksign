@@ -1,22 +1,22 @@
 #!/bin/sh
-# darksign : change le nom d'hôte du Pi (nom en .local).
-# Installé par install.sh dans /usr/local/sbin (appartient à root) ; l'interface
-# web l'appelle via sudo (règle /etc/sudoers.d/darksign).
-#   darksign-hostname NOM     (minuscules, chiffres et tirets, 63 caractères max.)
+# darksign: change the hostname of the Pi (its .local name).
+# Installed by install.sh in /usr/local/sbin (owned by root); the web backend
+# calls it through sudo (rule /etc/sudoers.d/darksign).
+#   darksign-hostname NAME    (lower case, digits and dashes, 63 characters max.)
 set -eu
 name="${1:-}"
 case "$name" in
-    ""|-*|*-|*[!a-z0-9-]*) echo "nom d'hôte invalide : « $name »" >&2; exit 2 ;;
+    ""|-*|*-|*[!a-z0-9-]*) echo "invalid hostname: \"$name\"" >&2; exit 2 ;;
 esac
-[ "${#name}" -le 63 ] || { echo "nom d'hôte trop long" >&2; exit 2; }
+[ "${#name}" -le 63 ] || { echo "hostname too long" >&2; exit 2; }
 [ "$(hostname)" = "$name" ] && exit 0
 
 hostnamectl set-hostname "$name"
-# le nom doit rester résolu localement (sudo, avahi)
+# the name must still resolve locally (sudo, avahi)
 if grep -q '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
     sed -i "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1\t$name/" /etc/hosts
 else
     printf '127.0.1.1\t%s\n' "$name" >> /etc/hosts
 fi
-# annonce mDNS sous le nouveau nom (avahi ne suit pas le changement seul)
+# mDNS announcement under the new name (avahi does not follow by itself)
 systemctl try-restart avahi-daemon

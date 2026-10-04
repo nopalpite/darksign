@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Lecteur vidéo plein écran piloté par GPIO et UDP (mpv + gpiod).
+"""Full-screen video player driven by GPIO and UDP (mpv + gpiod).
 
-Modes :
-  - loop        : playlist. Un seul média (vidéo ou image) tourne en boucle ;
-                  plusieurs médias s'enchaînent dans l'ordre (vidéos répétées
-                  un nombre de fois choisi, images affichées une durée
-                  choisie), puis la liste recommence.
-  - interactive : un média d'accroche en boucle ; un bouton GPIO ou un message
-                  UDP lance une vidéo, puis retour à l'accroche quand elle est
-                  terminée.
+Modes:
+  - loop        : playlist. A single media (video or image) loops forever;
+                  several media play in order (videos repeated a chosen
+                  number of times, images shown for a chosen duration), then
+                  the list starts over.
+  - interactive : an attract media loops; a GPIO button or a UDP message
+                  starts a video, then back to the attract loop when it ends.
 
-Messages UDP (port udp_port) : ceux des déclencheurs, plus pause, play et
-restart dans tous les modes.
+UDP messages (port udp_port): the triggers' ones, plus pause, play and
+restart in every mode.
 
-Le backend web communique avec ce processus via un socket unix
-(voir common.player_request) : commandes status, reload, trigger, pause.
+The web backend talks to this process over a unix socket (see
+common.player_request): status, reload, trigger and pause commands. Errors
+reported to the web UI are structured messages (i18n.msg).
 """
 import datetime
 import json
@@ -37,50 +37,50 @@ import mpv
 
 import network
 from gpiod.line import Bias, Direction, Edge
+from i18n import msg
 
 from common import (BASE, DATA_DIR, IMAGE_DURATION, MEDIA_DIR, SOCKET_PATH,
-                    SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, load_config,
+                    SUBTITLE_SIZES, UDP_MAX_LEN, load_config,
                     mdns_available, media_kind, network_addresses,
                     network_status, player_name, trigger_label, udp_key)
 
 log = logging.getLogger("player")
 
-# Écran d'accueil DarkSign (splash.py) : image fixe tout de suite, puis
-# animation d'intro une fois calculée. Rendu dans un processus séparé (numpy,
-# Pillow) pour garder le lecteur léger ; résultat mis en cache par adresse.
-SPLASH_CHECK = 10    # s : vérification de l'adresse réseau sur l'écran d'accueil
+# DarkSign splash screen (splash.py): still image right away, then the intro
+# animation once rendered. Rendered in a separate process (numpy, Pillow) to
+# keep the player light; result cached per address.
+SPLASH_CHECK = 10    # s: network address check on the splash screen
 SPLASH_INTRO = BASE / "assets" / "intro.mp4"
 SPLASH_LIST = DATA_DIR / "splash.ffconcat"
-SPLASH_NET_WAIT = 30  # s : attente du réseau (Wi-Fi) après l'intro de démarrage
-SPLASH_KEEP = 3       # écrans en cache (ex. sans réseau + Wi-Fi + Ethernet)
+SPLASH_NET_WAIT = 30  # s: wait for the network (Wi-Fi) after the boot intro
+SPLASH_KEEP = 3       # cached screens (e.g. offline + Wi-Fi + Ethernet)
 WEB_PORT = 8080
 
-# Image fixe : mpv ne la rend qu'une fois, et ce rendu reste dans la file
-# d'images du GPU (swapchain, 3 images) sans être présenté : l'écran garde
-# l'image précédente. On force quelques rendus imperceptibles (zoom infime)
-# pour vider la file.
+# Still image: mpv renders it once, and that frame stays in the GPU frame
+# queue (swapchain, 3 frames) without being presented: the screen keeps the
+# previous image. A few invisible redraws (tiny zoom) flush the queue.
 STILL_REDRAWS = 4
 STILL_REDRAW_DELAY = 0.25   # s
 
-PRESS_LOCKOUT = 0.3  # s : ignore les appuis trop rapprochés (rebonds, double appui)
+PRESS_LOCKOUT = 0.3  # s: ignore presses too close together (bounce, double press)
 
-# Boucle sans coupure : au lieu de revenir au début du fichier (loop-file de
-# mpv : le décodeur matériel est vidé, image figée ~200 ms), on fait lire au
-# démultiplexeur « concat » une liste qui répète la vidéo. Le décodeur reçoit
-# un flux continu. mpv ne reboucle la liste qu'au bout de LOOP_HOURS.
+# Seamless loop: instead of going back to the start of the file (mpv's
+# loop-file flushes the hardware decoder, ~200 ms frozen frame), the "concat"
+# demuxer reads a list repeating the video. The decoder gets a continuous
+# stream. mpv only loops the list itself after LOOP_HOURS.
 LOOP_LIST = DATA_DIR / "loop.ffconcat"
 LOOP_HOURS = 24
 LOOP_MAX_ENTRIES = 20000
 
-# Playlist de plusieurs vidéos : même principe pour les répétitions d'une
-# vidéo (une liste concat par entrée), mais le passage d'une vidéo à l'autre
-# se fait par la playlist de mpv. Le démultiplexeur concat ne sait pas enchaîner
-# des fichiers différents (résolution, cadence, échantillonnage audio) : les
-# horodatages sautent et le son se désynchronise.
+# Playlist of several videos: same idea for the repeats of one video (one
+# concat list per entry), but moving from one video to the next goes through
+# mpv's playlist. The concat demuxer cannot chain different files
+# (resolution, frame rate, audio sample rate): timestamps jump and the sound
+# drifts out of sync.
 PLAYLIST_LIST = "playlist-{}.ffconcat"
 
 
-_durations = {}  # (chemin, date de modification) -> durée
+_durations = {}  # (path, modification time) -> duration
 
 
 def media_duration(path):
@@ -107,16 +107,16 @@ def write_loop_list(path, duration):
 
 
 def write_concat(dest, path, duration, count):
-    """Liste concat qui répète « count » fois la vidéo « path »."""
-    # « duration » impose un décalage exact entre deux passages
-    quoted = str(path).replace("'", "'\\''")   # échappement ffconcat
+    """Concat list repeating the video "path" "count" times."""
+    # "duration" enforces an exact offset between two passes
+    quoted = str(path).replace("'", "'\\''")   # ffconcat escaping
     entry = f"file '{quoted}'\n"
     if duration > 0:
         entry += f"duration {duration:.6f}\n"
     content = "ffconcat version 1.0\n" + entry * count
     try:
         if dest.read_text() == content:
-            return   # même contenu : inutile de réécrire la carte SD
+            return   # same content: no need to rewrite the SD card
     except FileNotFoundError:
         pass
     tmp = dest.with_suffix(".tmp")
@@ -125,11 +125,11 @@ def write_concat(dest, path, duration, count):
 
 
 DISPLAY_MODE = "1920x1080@60"
-DISPLAY_CHECK = 2    # s : sans écran au démarrage, attente d'un branchement
+DISPLAY_CHECK = 2    # s: no screen at start, wait for one to be plugged in
 
 
 def hdmi_connectors():
-    """Sorties HDMI du pilote DRM : [(dossier sysfs, branchée ?)]."""
+    """HDMI outputs of the DRM driver: [(sysfs folder, connected?)]."""
     found = []
     for status in sorted(glob.glob("/sys/class/drm/card*-HDMI-A-*/status")):
         try:
@@ -141,12 +141,12 @@ def hdmi_connectors():
 
 
 def display_mode():
-    """Mode d'affichage imposé à mpv.
+    """Display mode forced on mpv.
 
-    mpv refait le modeset DRM et prendrait le mode « preferred » de l'écran
-    (souvent 4K), sans tenir compte du video= de cmdline.txt : on impose le
-    1080p. Mais un écran qui ne le propose pas (projecteur 720p…) resterait
-    noir : on garde alors son mode préféré.
+    mpv does its own DRM modeset and would pick the screen's "preferred"
+    mode (often 4K), ignoring video= in cmdline.txt: 1080p is forced. But a
+    screen without that mode (720p projector...) would stay black: its
+    preferred mode is kept then.
     """
     width_height = DISPLAY_MODE.split("@")[0]
     for path, connected in hdmi_connectors():
@@ -157,14 +157,14 @@ def display_mode():
                 continue
             if width_height in modes:
                 return DISPLAY_MODE
-            log.warning("écran sans mode %s (modes : %s) : mode préféré de l'écran",
-                        width_height, ", ".join(dict.fromkeys(modes)) or "aucun")
+            log.warning("screen without %s mode (modes: %s): using its preferred mode",
+                        width_height, ", ".join(dict.fromkeys(modes)) or "none")
             return "preferred"
     return DISPLAY_MODE
 
 
 class GpioWatcher:
-    """Surveille les broches d'entrée et signale chaque appui."""
+    """Watch the input pins and report each press."""
 
     def __init__(self, gpios, active_low, on_press):
         self.stop_event = threading.Event()
@@ -200,7 +200,7 @@ class GpioWatcher:
 
 
 class UdpListener:
-    """Reçoit les messages UDP (un datagramme = un message texte)."""
+    """Receive UDP messages (one datagram = one text message)."""
 
     def __init__(self, port, on_message):
         self.port = port
@@ -215,7 +215,7 @@ class UdpListener:
             try:
                 data, addr = self.sock.recvfrom(1024)
             except OSError:
-                return   # socket fermé
+                return   # socket closed
             text = data.decode("utf-8", errors="replace").strip("\x00\r\n\t ")
             if text:
                 self.on_message(text[:UDP_MAX_LEN * 2], addr[0])
@@ -229,50 +229,50 @@ class Player:
         self.events = queue.Queue()
         self.cfg = None
         self.state = "idle"        # boot | idle | setup | loop | attract | triggered
-        self.current = None        # nom du média affiché
-        self.current_sub = None    # sous-titres associés au média affiché
-        self.current_gpio = None   # broche ayant lancé la vidéo en cours
-        self.current_trigger = None  # déclencheur (index) de la vidéo en cours
-        self.current_source = None   # « GPIO17 », « UDP « intro » »…
+        self.current = None        # name of the media on screen
+        self.current_sub = None    # subtitles of the media on screen
+        self.current_gpio = None   # pin that started the current video
+        self.current_trigger = None  # trigger (index) of the current video
+        self.current_source = None   # "GPIO17", 'UDP "intro"'...
         self.udp = None
-        self.udp_error = None
-        self.last_udp = None         # dernier message reçu (interface web)
-        self.last_udp_seen = (None, 0.0)   # anti-doublon (message, instant)
-        self.loop_len = None       # durée d'un passage en boucle continue
-        self.loop_index = 0        # numéro du passage en cours (sous-titres)
-        self.playlist = []         # entrées de la playlist (plusieurs vidéos)
-        self.playlist_pos = None   # entrée en cours de lecture
-        self.entry_started = 0.0   # début d'affichage de l'entrée (images)
+        self.udp_error = None        # structured message
+        self.last_udp = None         # last message received (web UI)
+        self.last_udp_seen = (None, 0.0)   # duplicate filter (message, time)
+        self.loop_len = None       # duration of one pass of a seamless loop
+        self.loop_index = 0        # number of the current pass (subtitles)
+        self.playlist = []         # playlist entries (several media)
+        self.playlist_pos = None   # entry being played
+        self.entry_started = 0.0   # when the entry was shown (images)
         self.last_press = 0.0
-        self.paused = False        # lecture mise en pause depuis l'interface
-        self.last_error = None
+        self.paused = False        # paused from the web UI
+        self.last_error = None     # structured message
         self.watcher = None
         self.splash_addresses = None
         self.splash_checked = 0.0
         self.splash_key = None
-        self.splash_jobs = set()     # clés en cours de calcul
-        self.intro_played = False    # l'intro vient d'être jouée au démarrage
-        self.splash_waiting = False  # logo tenu à l'écran en attendant le réseau
+        self.splash_jobs = set()     # keys being rendered
+        self.intro_played = False    # the boot intro just played
+        self.splash_waiting = False  # logo held on screen, waiting for the network
         self.splash_deadline = 0.0
-        self.splash_shown = None     # (clé, "anim" | "image") affiché
-        self.audio_reopened = 0.0    # dernière réouverture de la sortie son
-        self.no_display = False      # mpv n'a pas pu ouvrir l'affichage
+        self.splash_shown = None     # (key, "anim" | "image") on screen
+        self.audio_reopened = 0.0    # last time the audio output was reopened
+        self.no_display = False      # mpv could not open the display
         self.display_checked = 0.0
 
         self.mpv = mpv.MPV(
             vo="gpu", gpu_context="drm", hwdec="v4l2m2m", ao="alsa",
-            # Pi 3 : la vidéo décodée doit aller sur le plan principal ;
-            # sur le plan overlay (défaut de mpv) chaque image est refusée
-            # par le pilote vc4 et l'écran reste noir.
+            # Pi 3: decoded video must go to the primary plane; on the
+            # overlay plane (mpv's default) every frame is rejected by the
+            # vc4 driver and the screen stays black.
             drm_drmprime_video_plane="primary", drm_draw_plane="overlay",
-            drm_mode=display_mode(),   # 1080p si l'écran le propose
+            drm_mode=display_mode(),   # 1080p if the screen offers it
             log_handler=self._mpv_log, loglevel="error",
-            # keep-open garde la dernière image à la fin d'un fichier ; sans
-            # keep-open-pause=no, mpv se met aussi en pause et le fichier chargé
-            # ensuite (accroche après l'intro ou une vidéo) resterait figé
+            # keep-open keeps the last frame at the end of a file; without
+            # keep-open-pause=no, mpv also pauses and the next file (attract
+            # loop after the intro or a video) would stay frozen
             fullscreen=True, keep_open="yes", keep_open_pause="no",
             idle="yes", force_window="yes",
-            # playlist : le fichier suivant est ouvert avant la fin du précédent
+            # playlist: the next file is opened before the current one ends
             prefetch_playlist="yes",
             image_display_duration="inf", background_color="#000000",
             osc=False, osd_level=0, input_default_bindings=False,
@@ -301,18 +301,18 @@ class Player:
         if "TTY" in message or "VT switcher" in message:
             return
         if "Error opening/initializing the selected video_out" in message:
-            self.no_display = True   # voir _check_display
+            self.no_display = True   # see _check_display
         log.error("mpv[%s] %s", component, message.strip())
 
-    # --- boucle principale : toutes les transitions passent par ici ---------
+    # --- main loop: every transition goes through here ----------------------
 
     def run(self):
         if SPLASH_INTRO.exists():
-            # séquence de démarrage : l'intro DarkSign, puis le contenu (ou le
-            # tutoriel si rien n'est programmé) quand elle se termine
+            # boot sequence: the DarkSign intro, then the content (or the
+            # setup screen when nothing is scheduled) once it ends
             self.state = "boot"
             self.mpv.command("loadfile", str(SPLASH_INTRO), "replace")
-            log.info("intro de démarrage")
+            log.info("boot intro")
         else:
             self.events.put(("reload",))
         while True:
@@ -323,17 +323,17 @@ class Player:
                     if self._check_display():
                         break
                     self._refresh_splash()
-                except Exception as e:  # pas plus ici qu'ailleurs
-                    log.exception("erreur pendant la surveillance périodique")
-                    self.last_error = str(e)
+                except Exception as e:  # no more here than elsewhere
+                    log.exception("error during periodic checks")
+                    self.last_error = msg("error.internal", detail=str(e))
                 continue
             try:
                 if ev == "quit":
                     break
                 getattr(self, "_on_" + ev)(*args)
-            except Exception as e:  # une erreur ne doit jamais arrêter le lecteur
-                log.exception("erreur sur l'évènement %s", ev)
-                self.last_error = str(e)
+            except Exception as e:  # an error must never stop the player
+                log.exception("error on event %s", ev)
+                self.last_error = msg("error.internal", detail=str(e))
         self._shutdown()
 
     def _on_reload(self):
@@ -349,13 +349,13 @@ class Player:
         self.mpv.sub_font_size = SUBTITLE_SIZES.get(style.get("size"), 48)
         if style.get("background"):
             self.mpv.sub_border_style = "opaque-box"
-            self.mpv.sub_back_color = "#99000000"   # noir à 60 %
+            self.mpv.sub_back_color = "#99000000"   # 60 % black
         else:
             self.mpv.sub_border_style = "outline-and-shadow"
 
         if self._needs_setup():
-            # rien de programmé : écran d'accueil, sans passer par un écran noir
-            # (après l'intro de démarrage, son logo reste affiché)
+            # nothing scheduled: splash screen, without a black screen in
+            # between (after the boot intro, its logo stays on screen)
             if self.intro_played:
                 self.splash_deadline = time.monotonic() + SPLASH_NET_WAIT
             self._show_splash("boot" if self.intro_played else "enter")
@@ -367,28 +367,28 @@ class Player:
                 self.watcher = GpioWatcher(gpios, inter["active_low"],
                                            self._gpio_pressed)
             except OSError as e:
-                self.last_error = f"GPIO indisponible : {e}"
-                log.error(self.last_error)
+                self.last_error = msg("player.error.gpio", detail=str(e))
+                log.error("GPIO unavailable: %s", e)
             self._show_attract()
         else:
             loop = self.cfg["loop"]
             self._play_playlist(loop["items"], muted=loop["muted"])
             self.state = "loop" if self.current else "idle"
         self.intro_played = False
-        log.info("configuration chargée : mode=%s", self.cfg["mode"])
+        log.info("configuration loaded: mode=%s", self.cfg["mode"])
 
     def _on_pause(self, paused):
-        # pause depuis l'interface : l'image reste figée, le son s'arrête
+        # pause from the web UI: the picture freezes, the sound stops
         if self.state not in ("loop", "attract", "triggered") or not self.current:
             return
         self.paused = bool(paused)
         self.mpv.pause = self.paused
         if not self.paused:
             self._reopen_audio()
-        log.info("lecture %s", "en pause" if self.paused else "reprise")
+        log.info("playback %s", "paused" if self.paused else "resumed")
 
     def _resume(self):
-        # tout nouveau contenu (configuration, bouton, écran d'accueil) repart
+        # any new content (configuration, button, splash screen) plays again
         if self.paused:
             self.paused = False
             self.mpv.pause = False
@@ -405,29 +405,29 @@ class Player:
         try:
             self.udp = UdpListener(port, self._udp_received)
         except OSError as e:
-            self.udp_error = f"port UDP {port} indisponible : {e.strerror or e}"
-            log.error(self.udp_error)
+            self.udp_error = msg("player.error.udp_port", port=port,
+                                 detail=e.strerror or str(e))
+            log.error("UDP port %d unavailable: %s", port, e)
 
     def _on_playback_restart(self):
-        # le nouveau fichier affiche sa première image : voir _hide_subtitles
+        # the new file shows its first frame: see _hide_subtitles
         self.mpv.sub_visibility = True
         self._reopen_audio()
 
     def _hide_subtitles(self):
-        # Jusqu'à la première image du nouveau fichier, mpv redessine la
-        # dernière image de l'ancien, à son horodatage (grand dans une boucle
-        # continue), avec les sous-titres du nouveau : une phrase prise au
-        # hasard s'afficherait par-dessus l'accroche.
+        # Until the first frame of the new file, mpv redraws the last frame
+        # of the old one at its timestamp (large in a seamless loop) with the
+        # new file's subtitles: a random line would show over the attract.
         self.mpv.sub_visibility = False
 
     def _reopen_audio(self):
-        # Son HDMI (pilote vc4) : quand mpv arrête puis relance le flux sans
-        # fermer la sortie (nouveau fichier, reprise après pause), le son est
-        # parfois perdu jusqu'à la réouverture suivante. On force donc une
-        # réouverture complète à chaque démarrage de lecture.
+        # HDMI audio (vc4 driver): when mpv stops and restarts the stream
+        # without closing the output (new file, resume after pause), the
+        # sound is sometimes lost until the next reopening. A full reopening
+        # is therefore forced each time playback starts.
         now = time.monotonic()
         if (self.mpv.audio_device.startswith("alsa/hdmi:")
-                and now - self.audio_reopened > 1):   # jamais en rafale
+                and now - self.audio_reopened > 1):   # never in bursts
             self.audio_reopened = now
             self.mpv.command("ao-reload")
 
@@ -453,35 +453,35 @@ class Player:
         elif key in ("pause", "play"):
             active = self.state in ("loop", "attract", "triggered") and self.current
             self._on_pause(key == "pause")
-            action = UDP_COMMANDS[key] if active else "ignoré : rien en lecture"
+            action = msg(f"udp.action.{key}" if active else "udp.action.idle")
         elif key == "restart":
             self._on_reload()
-            action = UDP_COMMANDS[key]
+            action = msg("udp.action.restart")
         else:
-            action = "inconnu"
-        log.info("UDP de %s : « %s » (%s)", sender, text, action)
+            action = msg("udp.action.unknown")
+        log.info('UDP from %s: "%s" (%s)', sender, text, action["key"])
         self.last_udp = {"message": text, "from": sender, "time": time.time(),
                          "action": action}
 
     def _trigger(self, index, source):
-        """Lance la vidéo d'un déclencheur ; renvoie ce qui s'est passé."""
+        """Start a trigger's video; return what happened (message)."""
         inter = self.cfg["interactive"]
         trigger = inter["triggers"][index]
         if self.state == "triggered" and not inter["interruptible"]:
-            log.info("%s ignoré : vidéo en cours non interruptible", source)
-            return "ignoré : vidéo en cours non interruptible"
+            log.info("%s ignored: current video is not interruptible", source)
+            return msg("udp.action.not_interruptible")
         log.info("%s -> %s", source, trigger["media"])
         if not self._play(trigger["media"], loop=False, muted=inter["triggers_muted"]):
-            return "média introuvable"
+            return msg("udp.action.missing")
         self.state = "triggered"
         self.current_gpio = trigger.get("gpio")
         self.current_trigger = index
         self.current_source = source
-        return f"lance {trigger['media']}"
+        return msg("udp.action.play_media", media=trigger["media"])
 
     def _on_eof(self):
         if not self.mpv.eof_reached:
-            return   # fin d'un fichier déjà remplacé
+            return   # end of a file already replaced
         if self.state == "boot":
             self.intro_played = True
             self._on_reload()
@@ -491,7 +491,7 @@ class Player:
     def _on_file_loaded(self):
         if media_kind(self.mpv.path or "") == "image":
             self._flush_still_image()
-        # playlist : nouvelle entrée (ou retour au début de la liste)
+        # playlist: new entry (or back to the start of the list)
         if self.state != "loop" or not self.playlist:
             return
         pos = self.mpv.playlist_pos
@@ -515,23 +515,23 @@ class Player:
         def run():
             for i in range(STILL_REDRAWS):
                 time.sleep(STILL_REDRAW_DELAY)
-                try:   # chaque changement provoque un nouveau rendu ; on finit à 0
+                try:   # each change triggers a redraw; ends at 0
                     self.mpv.video_zoom = 0.0001 if i % 2 == 0 else 0
                 except Exception:
-                    return   # lecteur en cours d'arrêt
+                    return   # player shutting down
 
         threading.Thread(target=run, daemon=True).start()
 
     def _on_loop_pass(self, index):
-        # boucle continue : les horodatages ne reviennent pas à zéro, on décale
-        # donc les sous-titres d'un passage à chaque tour
+        # seamless loop: timestamps never go back to zero, so subtitles are
+        # shifted by one pass each time around
         if self.loop_len and index != self.loop_index:
             self.loop_index = index
             self.mpv.sub_delay = index * self.loop_len
 
     def _on_error(self):
-        self.last_error = f"lecture impossible : {self.current}"
-        log.error(self.last_error)
+        self.last_error = msg("player.error.playback", media=self.current)
+        log.error("cannot play %s", self.current)
         if self.state == "triggered":
             self._show_attract()
 
@@ -542,10 +542,10 @@ class Player:
             and (MEDIA_DIR / media).is_file()
 
     def _needs_setup(self):
-        """Rien de programmé : ni boucle, ni accroche, ni bouton utilisable.
+        """Nothing scheduled: no playlist, no attract, no usable trigger.
 
-        Une accroche vide avec des boutons configurés reste un écran noir
-        voulu (option « écran noir » de l'interface).
+        An empty attract with triggers configured is a deliberate black
+        screen ("black screen" option of the web UI).
         """
         if self.cfg["mode"] == "loop":
             return not any(self._playable(it.get("media"))
@@ -555,34 +555,37 @@ class Player:
             self._playable(t.get("media")) for t in inter["triggers"])
 
     def _splash_key(self, addresses):
-        # toute retouche du rendu (fichiers source, intro) invalide le cache
-        sources = [BASE / "splash.py", BASE / "brand.py", SPLASH_INTRO]
+        # any change to the rendering (sources, intro, texts) invalidates it
+        sources = [BASE / "splash.py", BASE / "brand.py", SPLASH_INTRO,
+                   *sorted((BASE / "locales").glob("*.json"))]
         stamp = [f.stat().st_mtime if f.exists() else 0 for f in sources]
-        # sans réseau, l'écran affiche un diagnostic (Wi-Fi, câble) : il fait
-        # partie de la clé pour être redessiné quand l'état change
+        # offline, the screen shows a diagnosis (Wi-Fi, cable): it is part of
+        # the key, so the screen is redrawn when it changes
         diag = None if addresses else network_status()
-        # point d'accès : son nom et son mot de passe sont affichés
-        data = json.dumps([socket.gethostname(), player_name(self.cfg or load_config()),
-                           WEB_PORT, addresses, mdns_available(), stamp, diag,
-                           network.ap_info()])
+        cfg = self.cfg or load_config()
+        # access point: its name and password are displayed
+        data = json.dumps([socket.gethostname(), player_name(cfg),
+                           cfg.get("language"), WEB_PORT, addresses,
+                           mdns_available(), stamp, diag, network.ap_info()])
         return hashlib.sha1(data.encode()).hexdigest()[:12]
 
     def _show_splash(self, context="enter"):
-        """Affiche l'écran d'accueil.
+        """Show the splash screen.
 
-        context :
-          enter  - on arrive sur l'écran (contenu retiré…) : intro + fin animées
-          boot   - juste après l'intro de démarrage, arrêtée sur le logo centré :
-                   on attend le réseau (logo tenu), puis seule la fin est jouée
-          change - adresse modifiée ou rendu terminé : simple mise à jour de
-                   l'image, jamais d'animation rejouée
+        context:
+          enter  - arriving on the screen (content removed...): animated
+                   intro + ending
+          boot   - right after the boot intro, stopped on the centred logo:
+                   wait for the network (logo held), then play the ending only
+          change - address changed or rendering done: just update the
+                   picture, never replay the animation
         """
         addresses = network_addresses()
         self.state = "setup"
         self.splash_checked = time.monotonic()
         if context == "boot" and not addresses \
                 and time.monotonic() < self.splash_deadline:
-            self.splash_waiting = True   # la dernière image de l'intro reste
+            self.splash_waiting = True   # the last frame of the intro stays
             return
         self.splash_waiting = False
         self._resume()
@@ -598,10 +601,10 @@ class Player:
         self.mpv["sub-files"] = []
 
         if context != "change" and outro.exists() and SPLASH_INTRO.exists():
-            # intro générique + fin propre à l'adresse, enchaînées sans coupure ;
-            # mpv garde ensuite la dernière image (l'écran d'accueil). Après
-            # l'intro de démarrage, seule la fin est jouée : elle repart du logo
-            # centré sur lequel l'intro s'est arrêtée.
+            # generic intro + address-specific ending, chained seamlessly;
+            # mpv then keeps the last frame (the splash screen). After the
+            # boot intro, only the ending plays: it starts from the centred
+            # logo the intro stopped on.
             files = ([SPLASH_INTRO] if context == "enter" else []) + [outro]
             SPLASH_LIST.write_text("ffconcat version 1.0\n"
                                    + "".join(f"file '{f}'\n" for f in files))
@@ -609,14 +612,14 @@ class Player:
             self.mpv.command("loadfile", str(SPLASH_LIST), "replace")
             self.splash_shown = (key, "anim")
         elif self.splash_shown and self.splash_shown[0] == key:
-            pass    # déjà à l'écran (animation terminée ou image) : rien à faire
+            pass    # already on screen (animation done or image): nothing to do
         elif image.exists():
             self.mpv.demuxer_lavf_o = ""
             self.mpv.command("loadfile", str(image), "replace")
             self.splash_shown = (key, "image")
         elif context == "enter":
-            self.mpv.command("stop")     # écran noir le temps du rendu (~3 s)
-        # sinon (boot, change) : l'image actuelle reste jusqu'au rendu
+            self.mpv.command("stop")     # black screen while rendering (~3 s)
+        # otherwise (boot, change): the current picture stays until rendered
         if not (image.exists() and outro.exists()):
             self._build_splash(key, addresses, image, outro)
 
@@ -635,17 +638,17 @@ class Player:
                                         *args], check=True, timeout=1800,
                                        stdout=subprocess.DEVNULL)
                         self.events.put(("splash_ready", key))
-                # ménage : on garde les écrans les plus récents (le démarrage
-                # passe souvent par « sans réseau » avant d'avoir son adresse)
+                # cleanup: keep the most recent screens (boot often goes
+                # through "offline" before getting its address)
                 keys = sorted({f.stem for f in DATA_DIR.glob("splash-*.png")},
                               key=lambda k: (DATA_DIR / f"{k}.png").stat().st_mtime,
                               reverse=True)
                 for old in keys[SPLASH_KEEP:]:
                     for f in DATA_DIR.glob(f"{old}.*"):
                         f.unlink(missing_ok=True)
-                log.info("écran d'accueil animé prêt")
+                log.info("animated splash screen ready")
             except (subprocess.SubprocessError, OSError) as e:
-                log.error("rendu de l'écran d'accueil impossible : %s", e)
+                log.error("cannot render the splash screen: %s", e)
             finally:
                 self.splash_jobs.discard(key)
 
@@ -656,10 +659,10 @@ class Player:
             self._show_splash("change")
 
     def _check_display(self):
-        """Sans écran au démarrage (projecteur éteint, câble débranché), mpv
-        n'ouvre pas l'affichage et ne le rouvre jamais : le lecteur attend
-        qu'un écran soit branché puis s'arrête, systemd le relance aussitôt.
-        Renvoie True pour arrêter le lecteur."""
+        """Without a screen at start (projector off, cable unplugged), mpv
+        does not open the display and never reopens it: the player waits for
+        a screen to be plugged in, then stops; systemd restarts it at once.
+        Return True to stop the player."""
         if not self.no_display:
             return False
         now = time.monotonic()
@@ -667,19 +670,19 @@ class Player:
             return False
         self.display_checked = now
         if any(connected for _, connected in hdmi_connectors()):
-            log.info("écran détecté : redémarrage du lecteur")
+            log.info("screen detected: restarting the player")
             return True
-        error = "aucun écran détecté : branchez ou allumez l'écran HDMI"
+        error = msg("player.error.no_display")
         if self.last_error != error:
             self.last_error = error
-            log.warning(error)
+            log.warning("no screen detected: plug in or turn on the HDMI screen")
         return False
 
     def _refresh_splash(self):
-        # l'adresse IP peut arriver après le démarrage (DHCP, Wi-Fi) ou changer
+        # the IP address may arrive after boot (DHCP, Wi-Fi) or change
         if self.state != "setup":
             return
-        if self.splash_waiting:          # logo tenu : on vérifie chaque seconde
+        if self.splash_waiting:          # logo held: check every second
             if network_addresses() or time.monotonic() >= self.splash_deadline:
                 self._show_splash("boot")
             return
@@ -688,11 +691,11 @@ class Player:
         self.splash_checked = time.monotonic()
         addresses = network_addresses()
         if addresses != self.splash_addresses:
-            log.info("adresse réseau modifiée : écran d'accueil mis à jour")
+            log.info("network address changed: splash screen updated")
             self._show_splash("change")
         elif self._splash_key(addresses) != self.splash_key:
-            # diagnostic hors réseau, point d'accès activé ou modifié…
-            log.info("état du réseau modifié : écran d'accueil mis à jour")
+            # offline diagnosis, access point started or changed, language...
+            log.info("splash screen inputs changed: splash screen updated")
             self._show_splash("change")
 
     def _show_attract(self):
@@ -704,25 +707,25 @@ class Player:
             self.state = "idle"
 
     def _play_playlist(self, items, muted):
-        """Mode playlist : une entrée en boucle infinie, ou plusieurs médias
-        enchaînés (vidéo répétée « repeat » fois, image affichée « duration »
-        secondes) puis la liste recommence."""
+        """Playlist mode: one entry looping forever, or several media in
+        order (video repeated "repeat" times, image shown "duration" seconds),
+        then the list starts over."""
         playable = []
         for it in items:
             if self._playable(it.get("media")):
                 playable.append(it)
             elif it.get("media"):
-                self.last_error = f"média introuvable : {it['media']}"
-                log.error(self.last_error)
+                self.last_error = msg("player.error.missing", media=it["media"])
+                log.error("media not found: %s", it["media"])
         if len(playable) < 2:
-            # une seule entrée : boucle infinie, sans coupure
+            # a single entry: seamless endless loop
             return self._play(playable[0]["media"] if playable else None,
                               loop=True, muted=muted)
 
         self._resume()
         self.splash_shown = None
         self.playlist = []
-        targets = []   # (fichier à charger, options propres à l'entrée)
+        targets = []   # (file to load, per-entry options)
         for i, it in enumerate(playable):
             path = MEDIA_DIR / it["media"]
             if media_kind(it["media"]) == "image":
@@ -742,15 +745,15 @@ class Player:
                 old.unlink(missing_ok=True)
 
         self.mpv.mute = bool(muted)
-        self.mpv["sub-files"] = []   # sous-titres ajoutés à chaque entrée
+        self.mpv["sub-files"] = []   # subtitles added for each entry
         self.mpv.sub_delay = 0
         self.loop_index = 0
         self.loop_len = None
         self.current_sub = None
         self.playlist_pos = None
         self.mpv.demuxer_lavf_o = "safe=0"
-        # la playlist de mpv est remplacée par la première commande : l'option
-        # de boucle ne s'applique donc qu'aux nouvelles entrées
+        # mpv's playlist is replaced by the first command: the loop option
+        # therefore only applies to the new entries
         for i, (target, opts) in enumerate(targets):
             self.mpv.command("loadfile", str(target), "append" if i else "replace",
                              "-1", f"loop-file=no,{opts}")
@@ -763,15 +766,15 @@ class Player:
         self.splash_shown = None
         self.playlist = []
         self.playlist_pos = None
-        # avant le chargement : un seul fichier dans la liste de mpv, qui ne
-        # doit pas reboucler (vidéo déclenchée) après une playlist
+        # before loading: a single file in mpv's list, which must not loop
+        # (triggered video) after a playlist
         self.mpv.loop_playlist = "no"
         kind = media_kind(media) if media else None
         if kind not in ("video", "image") or not (MEDIA_DIR / media).is_file():
             if media:
-                self.last_error = f"média introuvable : {media}"
-                log.error(self.last_error)
-            self.mpv.command("stop")  # écran noir
+                self.last_error = msg("player.error.missing", media=media)
+                log.error("media not found: %s", media)
+            self.mpv.command("stop")  # black screen
             self.current = None
             return False
         path = MEDIA_DIR / media
@@ -779,7 +782,7 @@ class Player:
         sub = self.cfg["subtitles"].get(media) if kind == "video" else None
         subs = [str(MEDIA_DIR / sub)] if sub and (MEDIA_DIR / sub).is_file() else []
         self._hide_subtitles()
-        self.mpv["sub-files"] = subs   # pris en compte au chargement du fichier
+        self.mpv["sub-files"] = subs   # applied when the file loads
         self.current_sub = sub if subs else None
         self.mpv.sub_delay = 0
         self.loop_index = 0
@@ -788,17 +791,17 @@ class Player:
         if duration > 0.5:
             write_loop_list(path, duration)
             self.loop_len = duration
-            # format détecté par l'en-tête « ffconcat » : ne pas forcer
-            # demuxer-lavf-format, qui s'appliquerait aussi aux sous-titres
+            # format detected from the "ffconcat" header: do not force
+            # demuxer-lavf-format, which would also apply to subtitles
             self.mpv.demuxer_lavf_o = "safe=0"
             target = LOOP_LIST
         else:
             self.loop_len = None
             self.mpv.demuxer_lavf_o = ""
             target = path
-        # boucle passée au fichier lui-même : modifier l'option globale avant le
-        # chargement ferait reboucler le fichier précédent (l'intro, arrêtée
-        # sur sa dernière image) pendant la préparation du nouveau
+        # loop option given to the file itself: changing the global option
+        # before loading would loop the previous file (the intro, stopped on
+        # its last frame) while the new one is being prepared
         self.mpv.command("loadfile", str(target), "replace", "-1",
                          f"loop-file={'inf' if loop else 'no'}")
         self.current = media
@@ -818,8 +821,8 @@ class Player:
         self.events.put(("button", gpio))
 
     def _udp_received(self, text, sender):
-        # un même message répété aussitôt (émetteurs qui doublent l'envoi,
-        # l'UDP n'étant pas fiable) ne compte qu'une fois
+        # the same message repeated right away (senders send twice, UDP
+        # being unreliable) only counts once
         now = time.monotonic()
         key = udp_key(text)
         last_key, last_time = self.last_udp_seen
@@ -835,19 +838,19 @@ class Player:
             self.watcher.close()
         self.mpv.terminate()
 
-    # --- état pour le backend web ---------------------------------------------
+    # --- state for the web backend --------------------------------------------
 
     def status(self):
         try:
-            devices = [{"name": "auto", "description": "Automatique"}]
+            devices = [{"name": "auto", "description": msg("audio.auto")}]
             for d in self.mpv.audio_device_list:
-                # une entrée par carte : hdmi pour les sorties HDMI (voir
-                # common.hdmi_audio_device), plughw (convertit le format) pour les autres
+                # one entry per card: hdmi for HDMI outputs (see
+                # common.hdmi_audio_device), plughw (converts the format) otherwise
                 name = d["name"]
                 if name.startswith("alsa/hdmi:"):
                     label = "HDMI"
                 elif name.startswith("alsa/plughw:") and "hdmi" not in name.lower():
-                    label = ("Prise jack" if "Headphones" in name else
+                    label = (msg("audio.jack") if "Headphones" in name else
                              d["description"])
                 else:
                     continue
@@ -861,7 +864,7 @@ class Player:
             entry = self.playlist[self.playlist_pos]
             length = entry["duration"]
             if media_kind(entry["media"]) == "image":
-                # mpv n'avance pas la position d'une image affichée
+                # mpv does not advance the position of a displayed image
                 position = min(length, time.monotonic() - self.entry_started)
             done = int(position // length) if length and position else 0
             playlist = {"index": self.playlist_pos, "count": len(self.playlist),
@@ -907,20 +910,20 @@ class ControlHandler(socketserver.StreamRequestHandler):
                 player.events.put(("button", int(req["gpio"])))
                 resp = {"ok": True}
             else:
-                resp = {"error": f"commande inconnue : {cmd}"}
+                resp = {"error": f"unknown command: {cmd}"}
         except Exception as e:
             resp = {"error": str(e)}
         try:
             self.wfile.write((json.dumps(resp) + "\n").encode())
         except BrokenPipeError:
-            pass  # le client a abandonné (délai dépassé pendant le démarrage)
+            pass  # the client gave up (timeout during startup)
 
 
 def main():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)   # socket, listes, écrans d'accueil
+    DATA_DIR.mkdir(parents=True, exist_ok=True)   # socket, lists, splash screens
     player = Player()
 
     if os.path.exists(SOCKET_PATH):

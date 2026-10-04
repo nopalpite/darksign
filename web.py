@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Backend web d'administration du lecteur vidéo."""
+"""Web administration backend of the video player.
+
+Messages for the web UI (errors, warnings, usages...) are structured
+messages, {"key": ..., "vars": {...}} (i18n.msg), translated by the browser
+in each viewer's language; the translation files are served under /locales.
+"""
 import json
 import logging
 import os
@@ -9,31 +14,33 @@ import subprocess
 import threading
 import time
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
-from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR, ap_ssid,
-                    hostname_for, pi_model, player_name, slow_transcode,
-                    sudo_allowed,
-                    SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, available_gpios,
-                    fps_of, load_config, media_kind, player_request,
-                    save_config, trigger_label, udp_key)
-from transcode import INCOMING_DIR, Converter
+import i18n
 import network
+from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR, SUBTITLE_SIZES,
+                    UDP_COMMANDS, UDP_MAX_LEN, ap_ssid, available_gpios, fps_of,
+                    hostname_for, load_config, media_kind, pi_model,
+                    player_name, player_request, save_config, slow_transcode,
+                    sudo_allowed, trigger_label, udp_key)
+from i18n import msg
+from transcode import INCOMING_DIR, Converter
 
 app = Flask(__name__)
+log = logging.getLogger("web")
 PORT = 8080
 SYSTEMCTL = "/usr/bin/systemctl"
-SYSTEM_ACTIONS = ("reboot", "poweroff")   # autorisées par /etc/sudoers.d/darksign
-HOSTNAME_HELPER = "/usr/local/sbin/darksign-hostname"   # idem (install.sh)
+SYSTEM_ACTIONS = ("reboot", "poweroff")   # allowed by /etc/sudoers.d/darksign
+HOSTNAME_HELPER = "/usr/local/sbin/darksign-hostname"   # likewise (install.sh)
 NAME_MAX = 40
 
-_probe_cache = {}  # nom -> (mtime, infos)
+_probe_cache = {}  # name -> (mtime, info)
 
 
 def probe(path):
-    """Durée, résolution et codec d'un média (via ffprobe, mis en cache)."""
+    """Duration, resolution and codec of a media (ffprobe, cached)."""
     mtime = path.stat().st_mtime
     cached = _probe_cache.get(path.name)
     if cached and cached[0] == mtime:
@@ -73,16 +80,13 @@ def warnings_for(kind, info):
     warn = []
     if kind == "video":
         if info.get("codec") and info["codec"] != "h264":
-            warn.append(f"codec {info['codec']} : pas de décodage matériel sur ce Pi, "
-                        "risque de saccades (préférez du H.264)")
+            warn.append(msg("media.warning.codec", codec=info["codec"]))
         if (info.get("width") or 0) > 1920 or (info.get("height") or 0) > 1080:
-            warn.append("résolution supérieure à 1080p : non supportée en matériel")
+            warn.append(msg("media.warning.resolution"))
         elif (info.get("height") or 0) > 720 and (info.get("fps") or 0) > 30:
-            warn.append(f"{info['fps']:g} i/s en 1080p : au-delà des 30 i/s garantis "
-                        "par le décodeur du Pi 3, vérifiez la fluidité")
+            warn.append(msg("media.warning.fps", fps=f"{info['fps']:g}"))
     if kind == "image" and ((info.get("width") or 0) > 2048 or (info.get("height") or 0) > 2048):
-        warn.append("image trop grande pour le GPU du Pi (2048 px max) : renvoyez-la "
-                    "pour qu'elle soit redimensionnée")
+        warn.append(msg("media.warning.image_size"))
     return warn
 
 
@@ -101,32 +105,33 @@ def list_media():
 
 
 def media_usage(cfg, name):
+    """Where a media is used, as structured messages."""
     uses = []
     if any(it["media"] == name for it in cfg["loop"]["items"]):
-        uses.append("playlist")
+        uses.append(msg("media.use.playlist"))
     if cfg["interactive"]["attract"] == name:
-        uses.append("accroche")
+        uses.append(msg("media.use.attract"))
     for t in cfg["interactive"]["triggers"]:
         if t["media"] == name:
-            uses.append(trigger_label(t))
+            uses.append(msg("media.use.trigger", trigger=trigger_label(t)))
     for video, sub in cfg["subtitles"].items():
         if sub == name:
-            uses.append(f"sous-titres de {video}")
+            uses.append(msg("media.use.subtitles", video=video))
     return uses
 
 
 def prepare_image(path):
-    """Adapte une image à l'écran : rotation EXIF appliquée, 1920×1080 maximum.
+    """Fit an image to the screen: EXIF rotation applied, 1920×1080 at most.
 
-    Le GPU du Pi 3 refuse les textures de plus de 2048 pixels : une photo plus
-    grande s'affiche mal. L'image n'est réécrite que si elle doit changer.
+    The Pi 3 GPU rejects textures larger than 2048 pixels: a bigger photo
+    displays badly. The image is only rewritten when it must change.
     """
     with Image.open(path) as im:
         fmt = im.format
         if getattr(im, "n_frames", 1) > 1:
-            return   # GIF animé : laissé tel quel
+            return   # animated GIF: left as is
         if fmt == "JPEG":
-            im.draft("RGB", (1920, 1080))   # décodage réduit : moins de mémoire
+            im.draft("RGB", (1920, 1080))   # reduced decoding: less memory
         orientation = im.getexif().get(0x0112, 1)
         too_big = im.width > 1920 or im.height > 1080
         if orientation == 1 and not too_big and im.mode in ("RGB", "RGBA", "L"):
@@ -142,14 +147,14 @@ def prepare_image(path):
 
 
 def normalize_subtitle(raw, name):
-    """Vérifie un fichier de sous-titres et le convertit en UTF-8."""
+    """Check a subtitle file and convert it to UTF-8."""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        text = raw.decode("cp1252", errors="replace")   # fichiers Windows
+        text = raw.decode("cp1252", errors="replace")   # Windows files
     marker = "[Events]" if name.lower().endswith(".ass") else "-->"
     if marker not in text:
-        raise ValueError("fichier de sous-titres illisible ou vide")
+        raise ValueError("unreadable or empty subtitle file")
     return text.replace("\r\n", "\n").encode("utf-8")
 
 
@@ -169,14 +174,14 @@ def reload_player():
 
 def media_ready(name):
     if media_usage(load_config(), name):
-        reload_player()  # le fichier remplacé est en cours d'utilisation
+        reload_player()  # the replaced file is in use
 
 
 converter = Converter(on_done=media_ready)
 
 
 def playlist_item(it):
-    """Entrée de playlist nettoyée : répétitions (vidéo) ou durée (image)."""
+    """Cleaned playlist entry: repeats (video) or duration (image)."""
     if media_kind(it["media"]) == "image":
         duration = float(it.get("duration") or IMAGE_DURATION)
         return {"media": it["media"],
@@ -185,64 +190,66 @@ def playlist_item(it):
 
 
 def validate(cfg):
+    """Check and clean a configuration; return a list of messages."""
     errors = []
     media = {m["name"]: m["kind"] for m in list_media()}
     gpios = {g["gpio"] for g in available_gpios()}
 
     if cfg.get("mode") not in ("loop", "interactive"):
-        errors.append("mode inconnu")
+        errors.append(msg("config.error.mode"))
     try:
         cfg["volume"] = max(0, min(100, int(cfg.get("volume", 100))))
     except (TypeError, ValueError):
-        errors.append("volume invalide")
+        errors.append(msg("config.error.volume"))
+    if cfg.get("language") not in {l["code"] for l in i18n.languages()}:
+        errors.append(msg("config.error.language"))
 
     playable = {n for n, k in media.items() if k in ("video", "image")}
     items = cfg["loop"]["items"]
     for it in items:
         if it["media"] not in playable:
-            errors.append(f"playlist : média introuvable ({it['media']})")
+            errors.append(msg("config.error.playlist_missing", media=it["media"]))
     if cfg["mode"] == "loop" and not items:
-        errors.append("playlist : ajoutez au moins un média")
+        errors.append(msg("config.error.playlist_empty"))
 
     inter = cfg["interactive"]
     if inter.get("attract") and inter["attract"] not in playable:
-        errors.append(f"accroche : média introuvable ({inter['attract']})")
+        errors.append(msg("config.error.attract_missing", media=inter["attract"]))
     seen, seen_udp = set(), set()
     for t in inter["triggers"]:
         gpio, udp, label = t.get("gpio"), t.get("udp"), trigger_label(t)
         if gpio is None and not udp:
-            errors.append("déclencheur sans GPIO ni message UDP")
+            errors.append(msg("config.error.trigger_empty"))
         if gpio is not None:
             if gpio not in gpios:
-                errors.append(f"GPIO{gpio} n'est pas disponible")
+                errors.append(msg("config.error.gpio_unavailable", gpio=gpio))
             if gpio in seen:
-                errors.append(f"GPIO{gpio} est utilisée plusieurs fois")
+                errors.append(msg("config.error.gpio_duplicate", gpio=gpio))
             seen.add(gpio)
         if udp:
             if udp_key(udp) in UDP_COMMANDS:
-                errors.append(f"message UDP « {udp} » réservé aux commandes "
-                              f"({', '.join(UDP_COMMANDS)})")
+                errors.append(msg("config.error.udp_reserved", message=udp,
+                                  commands=", ".join(UDP_COMMANDS)))
             if udp_key(udp) in seen_udp:
-                errors.append(f"message UDP « {udp} » utilisé plusieurs fois")
+                errors.append(msg("config.error.udp_duplicate", message=udp))
             seen_udp.add(udp_key(udp))
         if media.get(t.get("media")) != "video":
-            errors.append(f"{label} : choisissez une vidéo")
+            errors.append(msg("config.error.trigger_video", trigger=label))
 
     net = cfg["network"]
     if net.get("mode") not in ("client", "ap"):
-        errors.append("réseau : mode inconnu")
-    # nom du point d'accès vide : celui du lecteur
+        errors.append(msg("config.error.network_mode"))
+    # empty access point name: the player name
     net["ap_ssid"] = str(net.get("ap_ssid") or "").strip() or None
     net["ap_password"] = str(net.get("ap_password") or "")
     if net["ap_ssid"] and len(net["ap_ssid"].encode()) > 32:
-        errors.append("point d'accès : nom de 32 caractères au maximum")
+        errors.append(msg("config.error.ap_ssid"))
     cfg["name"] = str(cfg.get("name") or "").strip() or None
     if cfg["name"] and len(cfg["name"]) > NAME_MAX:
-        errors.append(f"nom du lecteur : {NAME_MAX} caractères au maximum")
+        errors.append(msg("config.error.name", max=NAME_MAX))
     if not (8 <= len(net["ap_password"]) <= 63 and net["ap_password"].isascii()
             and net["ap_password"].isprintable()):
-        errors.append("point d'accès : mot de passe de 8 à 63 caractères "
-                      "(sans accents)")
+        errors.append(msg("config.error.ap_password"))
 
     try:
         port = int(cfg.get("udp_port"))
@@ -250,14 +257,14 @@ def validate(cfg):
             raise ValueError
         cfg["udp_port"] = port
     except (TypeError, ValueError):
-        errors.append("port UDP invalide (1024 à 65535)")
+        errors.append(msg("config.error.udp_port"))
 
     for video, sub in cfg["subtitles"].items():
         if media.get(video) != "video" or media.get(sub) != "subtitle":
-            errors.append(f"sous-titres invalides pour {video}")
+            errors.append(msg("config.error.subtitles", video=video))
     style = cfg["subtitle_style"]
     if style.get("size") not in SUBTITLE_SIZES:
-        errors.append("taille de sous-titres inconnue")
+        errors.append(msg("config.error.subtitle_size"))
     style["background"] = bool(style.get("background"))
     return errors
 
@@ -267,12 +274,19 @@ def index():
     return render_template("index.html")
 
 
-# --- tests de connectivité des appareils (point d'accès) --------------------------
-# Sur le point d'accès, tous les noms pointent vers le lecteur et le port 80 y
-# est redirigé (system/darksign-ap). Sans ces réponses, les téléphones jugent
-# le Wi-Fi « sans Internet » et passent par les données mobiles, même pour
-# joindre le lecteur. Android vérifie aussi Google en HTTPS, impossible ici :
-# il propose alors « Connexion limitée : se connecter quand même ».
+@app.get("/locales/<lang>.json")
+def locale_file(lang):
+    if lang not in {l["code"] for l in i18n.languages()}:
+        abort(404)
+    return send_from_directory(i18n.LOCALES_DIR, f"{lang}.json", max_age=0)
+
+
+# --- device connectivity checks (access point) ------------------------------------
+# On the access point, every name points to the player and port 80 is
+# redirected to it (system/darksign-ap). Without these answers, phones deem
+# the Wi-Fi "without Internet" and use mobile data, even to reach the
+# player. Android also checks Google over HTTPS, impossible here: it then
+# offers "Limited connectivity: connect anyway".
 
 @app.get("/generate_204")
 @app.get("/gen_204")
@@ -304,6 +318,7 @@ def api_state():
         gpios=available_gpios(),
         player=player_status(),
         jobs=converter.list(),
+        languages=i18n.languages(),
         system={"power": system_allowed("reboot"), "rename": rename_allowed(),
                 "model": pi_model(), "slow_transcode": slow_transcode(),
                 "name": player_name(load_config()), "hostname": socket.gethostname()},
@@ -316,13 +331,13 @@ def api_status():
                    health=system_health(), network=supervisor.status)
 
 
-# --- réseau --------------------------------------------------------------------
+# --- network ---------------------------------------------------------------------
 
 def network_call(fn, *args):
     try:
         return jsonify(ok=True, result=fn(*args))
     except network.NetworkError as e:
-        return jsonify(error=str(e)), 400
+        return jsonify(error=e.message), 400
 
 
 @app.get("/api/network")
@@ -330,7 +345,7 @@ def api_network():
     try:
         saved = network.saved_networks()
     except network.NetworkError as e:
-        saved, supervisor.status["error"] = [], str(e)
+        saved, supervisor.status["error"] = [], e.message
     return jsonify(status=supervisor.status, saved=saved, allowed=network_allowed())
 
 
@@ -345,9 +360,9 @@ def api_network_add():
     ssid = str(body.get("ssid") or "").strip()
     password = str(body.get("password") or "")
     if not 1 <= len(ssid.encode()) <= 32:
-        return jsonify(error="nom de réseau de 1 à 32 caractères"), 400
+        return jsonify(error=msg("network.error.ssid_length")), 400
     if password and not 8 <= len(password) <= 63:
-        return jsonify(error="mot de passe Wi-Fi de 8 à 63 caractères"), 400
+        return jsonify(error=msg("network.error.password_length")), 400
     return network_call(network.add_network, ssid, password)
 
 
@@ -358,7 +373,7 @@ def api_network_forget(name):
 
 @app.post("/api/network/connect")
 def api_network_connect():
-    # en tâche de fond : quitter le point d'accès coupe cette requête
+    # in the background: leaving the access point cuts this very request
     threading.Thread(target=supervisor.connect_now, daemon=True).start()
     return jsonify(ok=True)
 
@@ -367,7 +382,7 @@ def api_network_connect():
 def api_config():
     cfg = load_config()
     body = request.get_json(force=True)
-    for key in ("mode", "volume", "audio_device", "udp_port", "name"):
+    for key in ("mode", "volume", "audio_device", "udp_port", "name", "language"):
         if key in body:
             cfg[key] = body[key]
     old_network = network_settings(load_config())
@@ -376,13 +391,13 @@ def api_config():
         if isinstance(body.get(key), dict):
             cfg[key].update(body[key])
     if isinstance(body.get("subtitles"), dict):
-        # association vidéo -> sous-titres ; une valeur vide retire l'association
+        # video -> subtitles; an empty value removes the association
         cfg["subtitles"] = {v: s for v, s in body["subtitles"].items() if s}
     try:
         cfg["loop"]["items"] = [playlist_item(it)
                                 for it in cfg["loop"]["items"] if it.get("media")]
     except (TypeError, ValueError, KeyError):
-        return jsonify(errors=["playlist : répétitions ou durée invalide"]), 400
+        return jsonify(errors=[msg("config.error.playlist_values")]), 400
     try:
         cfg["interactive"]["triggers"] = [
             {"gpio": None if t.get("gpio") in (None, "") else int(t["gpio"]),
@@ -391,45 +406,43 @@ def api_config():
             for t in cfg["interactive"]["triggers"]
         ]
     except (TypeError, ValueError):
-        return jsonify(errors=["déclencheur : GPIO invalide"]), 400
+        return jsonify(errors=[msg("config.error.trigger_gpio")]), 400
     errors = validate(cfg)
     network_changed = network_settings(cfg) != old_network
     ap_changed = network_settings(cfg)[1:] != old_network[1:]
     if network_changed and not network_allowed():
-        errors.append("réseau : droits manquants, relancez l'installateur "
-                      "(sudo ./install.sh)")
+        errors.append(msg("config.error.network_rights"))
     new_hostname = None
     if cfg["name"] and cfg["name"] != old_name:
         new_hostname = hostname_for(cfg["name"])
         if new_hostname == socket.gethostname():
             new_hostname = None
         elif not rename_allowed():
-            errors.append("nom du lecteur : droits manquants pour changer le nom "
-                          "d'hôte, relancez l'installateur (sudo ./install.sh)")
+            errors.append(msg("config.error.rename_rights"))
     if errors:
         return jsonify(errors=errors), 400
     save_config(cfg)
 
     def apply():
-        # en tâche de fond : changer de mode peut couper la connexion en cours
+        # in the background: changing the mode may cut the current connection
         if new_hostname:
             rename_host(new_hostname)
         if network_changed:
             supervisor.apply(cfg, ap_changed=ap_changed)
-        reload_player()   # écran d'accueil : nouveau nom, nouveau réseau
+        reload_player()   # splash screen: new name, new network, new language
 
     threading.Thread(target=apply, daemon=True).start()
     return jsonify(ok=True, hostname=new_hostname)
 
 
 def network_settings(cfg):
-    """Réglages réseau effectifs (nom du point d'accès compris)."""
+    """Effective network settings (access point name included)."""
     net = cfg["network"]
     return net["mode"], ap_ssid(cfg), net["ap_password"]
 
 
 def network_allowed():
-    """Wi-Fi du lieu (polkit) et point d'accès (sudo) : règles d'install.sh."""
+    """Venue Wi-Fi (polkit) and access point (sudo): install.sh's rules."""
     return network.allowed() and network.ap_allowed()
 
 
@@ -441,33 +454,33 @@ def rename_host(hostname):
     res = subprocess.run(["sudo", "-n", HOSTNAME_HELPER, hostname],
                          capture_output=True, text=True, timeout=60)
     if res.returncode:
-        logging.getLogger("web").error("nom d'hôte : %s", res.stderr.strip())
+        log.error("hostname: %s", res.stderr.strip())
     else:
-        logging.getLogger("web").info("nom d'hôte : %s", hostname)
+        log.info("hostname: %s", hostname)
 
 
 @app.put("/api/media/<path:filename>")
 def api_upload(filename):
-    # Le fichier est envoyé brut et écrit directement sur la carte SD :
-    # pas de copie temporaire en RAM (/tmp), indispensable pour les grosses vidéos.
-    # Les vidéos passent par la file de conversion, les images sont prêtes.
+    # The file is sent raw and written straight to the SD card: no temporary
+    # copy in RAM (/tmp), which large videos require. Videos go through the
+    # conversion queue, images are ready at once.
     name = secure_filename(filename)
     kind = media_kind(name)
     if not name or not kind:
-        return jsonify(error="format non supporté"), 400
+        return jsonify(error=msg("upload.error.format")), 400
     if kind == "subtitle":
         limit = 5 * 1024 * 1024
         raw = request.stream.read(limit + 1)
         if len(raw) > limit:
-            return jsonify(error="fichier de sous-titres trop gros"), 400
+            return jsonify(error=msg("upload.error.subtitle_size")), 400
         try:
             data = normalize_subtitle(raw, name)
-        except ValueError as e:
-            return jsonify(error=str(e)), 400
+        except ValueError:
+            return jsonify(error=msg("upload.error.subtitle_unreadable")), 400
         tmp = MEDIA_DIR / f".{os.urandom(4).hex()}.upload"
         tmp.write_bytes(data)
         os.replace(tmp, MEDIA_DIR / name)
-        media_ready(name)   # rechargement si ces sous-titres sont affichés
+        media_ready(name)   # reload if these subtitles are on screen
         return jsonify(ok=True, name=name)
 
     dest_dir = INCOMING_DIR if kind == "video" else MEDIA_DIR
@@ -482,7 +495,7 @@ def api_upload(filename):
         try:
             prepare_image(tmp)
         except OSError as e:
-            return jsonify(error=f"image illisible : {e}"), 400
+            return jsonify(error=msg("upload.error.image", detail=str(e))), 400
         os.replace(tmp, dest_dir / name)
     finally:
         tmp.unlink(missing_ok=True)
@@ -504,13 +517,13 @@ def api_cancel_job(job_id):
 def api_delete(name):
     path = MEDIA_DIR / secure_filename(name)
     if not path.is_file():
-        return jsonify(error="fichier introuvable"), 404
+        return jsonify(error=msg("media.error.not_found")), 404
     cfg = load_config()
     uses = media_usage(cfg, path.name)
     if uses:
-        return jsonify(error=f"utilisé par : {', '.join(uses)}"), 409
+        return jsonify(error=msg("media.error.in_use"), uses=uses), 409
     path.unlink()
-    if cfg["subtitles"].pop(path.name, None):   # vidéo supprimée
+    if cfg["subtitles"].pop(path.name, None):   # video deleted
         save_config(cfg)
     return jsonify(ok=True)
 
@@ -521,30 +534,27 @@ def api_pause():
     try:
         return jsonify(player_request("pause", paused=paused))
     except OSError:
-        return jsonify(error="lecteur injoignable"), 503
+        return jsonify(error=msg("error.player_unreachable")), 503
 
 
 @app.post("/api/player/restart")
 def api_restart():
-    # rechargement de la configuration : la lecture repart du début
+    # reloading the configuration: playback starts over
     try:
         return jsonify(player_request("reload"))
     except OSError:
-        return jsonify(error="lecteur injoignable"), 503
+        return jsonify(error=msg("error.player_unreachable")), 503
 
 
-# vcgencmd get_throttled : bits « maintenant » (0-3) et « depuis le démarrage » (16-19)
-THROTTLE_FLAGS = [
-    (0, "under_voltage", "alimentation insuffisante"),
-    (1, "freq_capped", "fréquence plafonnée"),
-    (2, "throttled", "processeur ralenti"),
-    (3, "temp_limit", "limite de température atteinte"),
-]
+# vcgencmd get_throttled: "now" bits (0-3) and "since boot" bits (16-19);
+# the web UI translates the codes (health.flag.<code>)
+THROTTLE_FLAGS = [(0, "under_voltage"), (1, "freq_capped"), (2, "throttled"),
+                  (3, "temp_limit")]
 _health = {"time": 0, "data": None}
 
 
 def system_health():
-    """Santé du Pi (mise en cache 5 s : l'interface interroge chaque seconde)."""
+    """Health of the Pi (cached 5 s: the web UI polls every second)."""
     if time.monotonic() - _health["time"] < 5:
         return _health["data"]
     data = {}
@@ -558,8 +568,8 @@ def system_health():
                              text=True, timeout=5).stdout
         bits = int(out.strip().split("=")[1], 16)
         data["power"] = {
-            "now": [label for bit, _, label in THROTTLE_FLAGS if bits >> bit & 1],
-            "since_boot": [label for bit, _, label in THROTTLE_FLAGS
+            "now": [code for bit, code in THROTTLE_FLAGS if bits >> bit & 1],
+            "since_boot": [code for bit, code in THROTTLE_FLAGS
                            if bits >> (bit + 16) & 1],
         }
     except (OSError, subprocess.SubprocessError, IndexError, ValueError):
@@ -583,28 +593,27 @@ def system_health():
 
 
 def system_allowed(action):
-    """Droit de redémarrer / éteindre (règle sudo posée par install.sh)."""
+    """Permission to reboot / power off (sudo rule installed by install.sh)."""
     return sudo_allowed(f"{SYSTEMCTL} {action}")
 
 
 @app.post("/api/system/<action>")
 def api_system(action):
     if action not in SYSTEM_ACTIONS:
-        return jsonify(error="action inconnue"), 404
+        return jsonify(error=msg("system.error.action")), 404
     if not system_allowed(action):
-        return jsonify(error="droits manquants : relancez l'installateur "
-                             "(sudo ./install.sh)"), 403
-    # la réponse part avant l'arrêt : systemctl rend la main tout de suite
+        return jsonify(error=msg("error.rights_missing")), 403
+    # the reply leaves before the shutdown: systemctl returns at once
     subprocess.Popen(["sudo", "-n", SYSTEMCTL, action])
     return jsonify(ok=True)
 
 
 @app.post("/api/trigger-udp")
 def api_trigger_udp():
-    # test de bout en bout : un vrai datagramme, reçu comme ceux du réseau
+    # end-to-end test: a real datagram, received like those from the network
     message = str(request.get_json(force=True).get("message") or "").strip()
     if not message:
-        return jsonify(error="message vide"), 400
+        return jsonify(error=msg("udp.error.empty")), 400
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.sendto(message.encode(), ("127.0.0.1", int(load_config()["udp_port"])))
     return jsonify(ok=True)
@@ -615,11 +624,11 @@ def api_trigger(gpio):
     try:
         return jsonify(player_request("trigger", gpio=gpio))
     except OSError:
-        return jsonify(error="lecteur injoignable"), 503
+        return jsonify(error=msg("error.player_unreachable")), 503
 
 
 def start_network():
-    """Mot de passe du point d'accès (généré une fois) et mode réseau."""
+    """Access point password (generated once) and network mode."""
     global supervisor
     cfg = load_config()
     if not cfg["network"]["ap_password"]:
@@ -630,9 +639,9 @@ def start_network():
         threading.Thread(target=supervisor.apply, args=(cfg,), daemon=True).start()
     else:
         supervisor.mode = cfg["network"]["mode"]
-        supervisor.error = ("droits manquants : relancez l'installateur "
-                            "(sudo ./install.sh)")
-        logging.getLogger("network").warning(supervisor.error)
+        supervisor.error = msg("error.rights_missing")
+        logging.getLogger("network").warning(
+            "missing permissions: run the installer again (sudo ./install.sh)")
 
 
 supervisor = None

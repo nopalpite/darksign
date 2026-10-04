@@ -1,13 +1,13 @@
 [Unit]
-Description=Point d'accès Wi-Fi du lecteur (hostapd + dnsmasq)
-# démarré et arrêté à la demande par l'interface web (network.py), jamais au
-# démarrage du Pi : c'est elle qui choisit entre Wi-Fi du lieu et point d'accès
+Description=DarkSign Wi-Fi access point (hostapd + dnsmasq)
+# started and stopped on demand by the web backend (network.py), never at
+# boot: the backend chooses between venue Wi-Fi and access point
 After=NetworkManager.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/darksign-ap run @DIR@/data/config.json
-# toujours : le Wi-Fi revient à NetworkManager, même après un échec
+# always: the Wi-Fi goes back to NetworkManager, even after a failure
 ExecStopPost=/usr/local/sbin/darksign-ap cleanup
 Restart=on-failure
 RestartSec=3

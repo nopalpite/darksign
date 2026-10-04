@@ -1,250 +1,267 @@
 # darksign
 
-Lecteur vidéo pour Raspberry Pi — un petit pied de nez à BrightSign. Lecture plein écran sur la sortie HDMI du Pi (mpv, sans bureau) pilotée par
-des boutons sur les GPIO, administrée depuis une interface web.
+*[Version française](README.fr.md)*
 
-- `player.py` : lecteur (mpv + gpiod), service `videoplayer`
-- `web.py` : interface d'administration sur le port 8080, service `videoplayer-web`
-- `common.py` : configuration, médias, GPIO disponibles, dialogue avec le lecteur
-- `transcode.py` : file de conversion des vidéos importées
-- `network.py` : Wi-Fi du lieu (NetworkManager) ou point d'accès autonome
-- `system/` : scripts root installés dans /usr/local/sbin (point d'accès,
-  nom d'hôte), appelés par l'interface via sudo
-- `splash.py` : écran d'accueil (image fixe et animation d'intro)
-- `brand.py` : identité DarkSign (logo éclipse, mot-symbole, rendu du halo)
-- `assets/intro.mp4` : intro animée générique (éclipse), générée par `splash.py intro`
-- `media/` : vidéos et images envoyées depuis l'interface
-- `data/config.json` : configuration (écrite par l'interface)
+Video player for Raspberry Pi — a little wink at BrightSign. Full-screen
+playback on the Pi's HDMI output (mpv, no desktop), driven by GPIO buttons or
+UDP messages, managed from a web interface in your language.
 
-Les deux processus dialoguent via le socket unix `data/player.sock`
-(commandes `status`, `reload`, `trigger`, `pause`).
+- `player.py`: the player (mpv + gpiod), `videoplayer` service
+- `web.py`: web interface on port 8080, `videoplayer-web` service
+- `common.py`: configuration, media, available GPIOs, talking to the player
+- `transcode.py`: conversion queue for uploaded videos
+- `network.py`: venue Wi-Fi (NetworkManager) or standalone access point
+- `i18n.py`, `locales/`: translations (see [Languages](#languages))
+- `system/`: root scripts installed in /usr/local/sbin (access point,
+  hostname), called by the web backend through sudo
+- `splash.py`: setup screen (still image and intro animation)
+- `brand.py`: DarkSign identity (eclipse logo, wordmark, glow rendering)
+- `assets/intro.mp4`: generic animated intro (eclipse), made by `splash.py intro`
+- `media/`: videos and images uploaded from the web interface
+- `data/config.json`: configuration (written by the web interface)
+
+The two processes talk through the unix socket `data/player.sock`
+(`status`, `reload`, `trigger` and `pause` commands).
 
 ## Installation
 
-**Prérequis** : Raspberry Pi 3 et une carte SD flashée avec **Raspberry Pi OS
-Lite (64-bit) « Trixie »**. Dans Raspberry Pi Imager, personnalisez l'image :
-nom d'hôte, utilisateur et mot de passe, Wi-Fi (ou prévoir un câble Ethernet)
-et SSH activé. Le code utilise mpv ≥ 0.38 et libgpiod 2, absents de Bookworm.
+**Requirements**: a Raspberry Pi 3 or 4 and an SD card flashed with
+**Raspberry Pi OS Lite (64-bit) "Trixie"**. In Raspberry Pi Imager, customise
+the image: hostname, user and password, Wi-Fi (or plan an Ethernet cable) and
+SSH enabled. The code needs mpv ≥ 0.38 and libgpiod 2, which Bookworm lacks.
 
-Au premier démarrage, connectez-vous en SSH puis lancez :
+On first boot, connect over SSH and run:
 
     curl -fsSL https://raw.githubusercontent.com/nopalpite/videoplayer/main/install.sh | sudo bash
 
-ou, depuis un dépôt cloné : `sudo ./install.sh`. Redémarrez à la fin : le Pi
-démarre sur l'animation darksign puis sur l'écran d'accueil, sans aucun média,
-sous-titre ni configuration.
+or, from a cloned repository: `sudo ./install.sh`. Reboot at the end: the Pi
+boots into the darksign animation, then the setup screen, with no media,
+subtitles or configuration.
 
-L'installateur :
+The installer asks for its language (which is also the language of the
+player's screen), the player name and the network mode, then:
 
-1. vérifie le matériel et la version du système ;
-2. installe les paquets (mpv, ffmpeg, Flask, libgpiod, Pillow, numpy, qrcode,
-   police Inter, avahi pour le nom `.local`) ;
-3. clone le dépôt dans `~/videoplayer` (ou installe sur place s'il est lancé
-   depuis un dépôt cloné) ;
-4. crée `media/` et `data/` vides ;
-5. ajoute l'utilisateur aux groupes `video`, `render`, `audio` et `gpio` ;
-6. installe et active les services `videoplayer` et `videoplayer-web`
-   (générés depuis `systemd/*.service.in`) ;
-7. configure le démarrage silencieux (voir « Démarrage ») et conserve le
-   journal système entre les redémarrages.
+1. checks the hardware and the system version;
+2. installs the packages (mpv, ffmpeg, Flask, libgpiod, Pillow, numpy, qrcode,
+   Inter font, avahi for the `.local` name, hostapd, dnsmasq);
+3. clones the repository into `~/videoplayer` (or installs in place when run
+   from a cloned repository);
+4. creates empty `media/` and `data/` folders;
+5. adds the user to the `video`, `render`, `audio` and `gpio` groups, and
+   lets the web interface reboot, power off, rename the Pi and manage the
+   network (narrow sudo and polkit rules);
+6. installs and enables the `videoplayer` and `videoplayer-web` services
+   (generated from `systemd/*.service.in`);
+7. sets up the quiet boot (see [Boot](#boot)) and keeps the system journal
+   across reboots.
 
-Options : `--user NOM`, `--dir CHEMIN`, `--reboot`, `--dry-run` (affiche sans
-rien modifier), `--force` (ignore les vérifications), `--reset` (efface
-médias et configuration, confirmation demandée ou `--yes` sans terminal).
-Voir `./install.sh --help`.
+Options: `--lang en|fr`, `--name NAME`, `--network client|ap`, `--ap-ssid`,
+`--ap-password`, `--user NAME`, `--dir PATH`, `--reboot`, `--dry-run` (show
+without changing anything), `--force` (skip the checks), `--reset` (erase media
+and configuration, asks for confirmation or `--yes` without a terminal). See
+`./install.sh --help`.
 
-**Mise à jour** : relancer l'installateur. Il récupère la dernière version,
-relance les services et conserve médias et configuration.
+**Update**: run the installer again. It fetches the latest version, restarts
+the services and keeps the media and configuration.
 
-Pour tester sans bouton câblé : [gpio-web](https://github.com/nopalpite/gpio-web).
+To test without a wired button: [gpio-web](https://github.com/nopalpite/gpio-web).
 
 ## Modes
 
-- **Playlist** : un seul média (vidéo ou image) tourne en boucle sans fin ;
-  plusieurs médias s'enchaînent dans l'ordre choisi (réorganisable), puis la
-  liste recommence. Chaque vidéo est répétée un nombre de fois défini. Les répétitions
-  d'une même vidéo sont sans coupure ; entre deux vidéos différentes, mpv
-  précharge la suivante. Une image reste affichée une durée choisie (6 s par
-  défaut).
-- **Interactif** : une accroche (vidéo ou image) tourne en boucle ; un appui
-  sur un bouton lance la vidéo associée, puis retour à l'accroche à la fin.
-  Option : un appui peut ou non interrompre la vidéo en cours.
-  Chaque vidéo se lance par un bouton GPIO, un message UDP, ou les deux.
+- **Playlist**: a single media (video or image) loops forever; several media
+  play in the chosen order (reorderable), then the list starts over. Each
+  video is repeated a set number of times. Repeats of the same video are
+  seamless; between two different videos, mpv preloads the next one. An image
+  stays on screen for a chosen time (6 s by default).
+- **Interactive**: an attract media (video or image) loops; a trigger plays its
+  video, then back to the attract loop when it ends. Option: a trigger may or
+  may not interrupt the current video. Each video is started by a GPIO button,
+  a UDP message, or both.
 
-## Nom du lecteur
+## Player name
 
-Chaque lecteur a un nom (« Hall A », « Stand 12 »…), demandé à l'installation
-(ou `--name`) et modifiable dans l'interface. Il est affiché dans l'interface
-et sur l'écran d'accueil, et repris :
+Each player has a name ("Hall A", "Booth 12"...), asked at installation (or
+`--name`) and editable in the web interface. It is displayed in the interface
+and on the setup screen, and used:
 
-- dans son adresse : `http://hall-a.local:8080` (nom d'hôte du Pi, changé par
-  `/usr/local/sbin/darksign-hostname`, que l'interface appelle via sudo) ;
-- dans le nom du Wi-Fi de son point d'accès, sauf si un autre nom est choisi.
+- in its address: `http://hall-a.local:8080` (hostname of the Pi, changed by
+  `/usr/local/sbin/darksign-hostname`, which the web backend calls via sudo);
+- as the Wi-Fi name of its access point, unless another name is chosen.
 
-Pratique pour réutiliser les mêmes lecteurs d'un événement à l'autre, ou pour
-en distinguer plusieurs sur un même réseau.
+Handy to reuse the same players from one event to the next, or to tell
+several apart on the same network.
 
-## Réseau
+## Network
 
-Deux fonctionnements, choisis à l'installation (question posée par
-install.sh, ou `--network client|ap`, avec `--ap-ssid` et `--ap-password`)
-et modifiables ensuite dans l'interface (section Réseau) :
+Two ways of working, chosen at installation (installer question, or
+`--network client|ap` with `--ap-ssid` and `--ap-password`) and editable later
+in the web interface:
 
-- **Wi-Fi du lieu** : le lecteur rejoint le premier réseau Wi-Fi mémorisé à
-  portée. Les réseaux s'ajoutent depuis l'interface (recherche des réseaux
-  visibles, mot de passe). Si aucun réseau n'est joignable pendant 90 s (au
-  démarrage ou plus tard), le lecteur active son point d'accès en secours,
-  jusqu'au prochain redémarrage ou changement de mode : on ne le perd jamais.
-- **Point d'accès autonome** (événementiel) : le lecteur crée son propre
-  réseau Wi-Fi WPA2, sans box ni routeur. Il est joignable en
-  `http://10.42.0.1:8080` ; nom (celui du lecteur par défaut) et mot de passe
-  (généré à l'installation, modifiable) sont affichés sur l'écran d'accueil, avec un QR code pour
-  rejoindre le réseau et un autre pour ouvrir l'interface.
+- **Venue Wi-Fi**: the player joins the first saved Wi-Fi network in range.
+  Networks are added from the web interface (scan of visible networks,
+  password). If no network can be reached for 90 s (at boot or later), the
+  player starts its access point as a fallback, until the next reboot or mode
+  change: it never becomes unreachable.
+- **Standalone access point** (events): the player creates its own WPA2
+  Wi-Fi network, with no box or router. It can be reached at
+  `http://10.42.0.1:8080`; the name (the player name by default) and password
+  (generated at installation, editable) are shown on the setup screen, with a
+  QR code to join the network and another one to open the interface.
 
-Le câble Ethernet fonctionne dans les deux modes. Le Wi-Fi du lieu passe par
-NetworkManager (install.sh autorise l'utilisateur du lecteur à le piloter :
-règle polkit `/etc/polkit-1/rules.d/50-darksign.rules`). Le point d'accès est
-le service `darksign-ap` (hostapd + dnsmasq, script `system/darksign-ap`) :
-celui de NetworkManager annonce une authentification (PSK-SHA256) que la puce
-du Pi 3 ne gère pas, et les téléphones refusaient de s'y connecter. Ici :
-WPA2-PSK seul, CCMP, sans PMF.
+The Ethernet cable works in both modes. The venue Wi-Fi goes through
+NetworkManager (polkit rule `/etc/polkit-1/rules.d/50-darksign.rules`). The
+access point is the `darksign-ap` service (hostapd + dnsmasq, script
+`system/darksign-ap`): NetworkManager's own access point advertises an
+authentication (PSK-SHA256) the Pi 3 chip does not support, and phones refused
+to join it. Here: WPA2-PSK only, CCMP, no PMF.
 
-Sur le point d'accès, tous les noms DNS pointent vers le lecteur et le port 80
-mène à l'interface : les tests de connectivité des téléphones et ordinateurs
-reçoivent la réponse attendue, sinon ils jugeraient le réseau « sans Internet »
-et passeraient par les données mobiles, même pour joindre le lecteur. Android
-vérifie aussi Google en HTTPS, impossible hors ligne : s'il affiche
-« Connexion limitée », choisir « Se connecter quand même ». Un VPN actif sur
-l'appareil capte aussi le trafic local : le couper le temps de l'administration.
+On the access point, every DNS name points to the player and port 80 leads to
+the interface: the connectivity checks of phones and computers get the answer
+they expect, otherwise they would deem the network "without Internet" and use
+mobile data, even to reach the player. Android also checks Google over HTTPS,
+impossible offline: if it shows "Limited connectivity", choose "Connect
+anyway". A VPN running on the device also captures local traffic: turn it off
+while managing the player.
 
-## Commandes UDP
+## UDP commands
 
-Le lecteur écoute des messages texte en UDP (port 5000 par défaut, modifiable
-dans l'interface), un message par datagramme, sans tenir compte des majuscules
-ni des espaces ou retours à la ligne autour :
+The player listens for text messages over UDP (port 5000 by default, editable
+in the interface), one message per datagram, case-insensitive and ignoring
+surrounding spaces or line breaks:
 
-- en mode interactif, le message d'un déclencheur lance sa vidéo ;
-- dans tous les modes : `pause`, `play` (reprise) et `restart` (relance
-  depuis le début).
+- in interactive mode, a trigger's message plays its video;
+- in every mode: `pause`, `play` (resume) and `restart` (start over).
 
     echo film | nc -u -w1 hall-a.local 5000
 
-Un même message répété dans les 300 ms (émetteurs qui doublent l'envoi) ne
-compte qu'une fois. Le dernier message reçu, son expéditeur et son effet
-s'affichent dans l'interface.
+The same message repeated within 300 ms (senders that send twice) only counts
+once. The last message received, its sender and its effect are shown in the
+interface.
 
-## Démarrage
+## Languages
 
-Au démarrage, l'écran reste noir (ni arc-en-ciel, ni texte, ni logo, ni
-invite de connexion), puis l'intro DarkSign (`assets/intro.mp4`) est jouée dès
-que la carte graphique est prête, sans attendre le réseau. Ensuite, le lecteur
-enchaîne sur le contenu programmé, ou sur le tutoriel si rien ne l'est.
+The web interface follows each browser's language, with a selector at the top
+of the page; the player's setup screen on the TV uses the player language,
+chosen at installation and editable in the interface. Available: English,
+French. Translations are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Réglages système correspondants (sauvegardes des originaux :
-`/boot/firmware/*.avant-darksign`) :
+## Boot
 
-- `cmdline.txt` : `console=tty3` au lieu de `console=tty1`, et
+At boot the screen stays black (no rainbow, text, logo or login prompt), then
+the DarkSign intro (`assets/intro.mp4`) plays as soon as the graphics card is
+ready, without waiting for the network. The player then moves on to the
+scheduled content, or to the setup screen when nothing is scheduled.
+
+Matching system settings (backups of the originals:
+`/boot/firmware/*.before-darksign`, `*.avant-darksign` for older
+installations):
+
+- `cmdline.txt`: `console=tty3` instead of `console=tty1`, and
   `quiet loglevel=3 logo.nologo vt.global_cursor_default=0 consoleblank=0
-  systemd.show_status=false rd.udev.log_level=3 udev.log_level=3` ;
-- `config.txt` : `disable_splash=1` ;
-- invite de connexion à l'écran désactivée : `sudo systemctl disable getty@tty1`
-  (SSH et console série restent disponibles) ;
-- service `videoplayer` sans dépendances par défaut, lancé après
-  `dev-dri-card0.device` (voir `systemd/videoplayer.service.in`).
+  systemd.show_status=false rd.udev.log_level=3 udev.log_level=3`;
+- `config.txt`: `disable_splash=1`;
+- login prompt on the screen disabled: `sudo systemctl disable getty@tty1`
+  (SSH and the serial console stay available);
+- `videoplayer` service without default dependencies, started after
+  `dev-dri-card0.device` (see `systemd/videoplayer.service.in`).
 
-Tous ces réglages sont appliqués par `install.sh`.
+All these settings are applied by `install.sh`. Without a screen at boot
+(projector off, cable unplugged), the player waits and restarts by itself as
+soon as an HDMI screen is plugged in.
 
-## Écran d'accueil
+## Setup screen
 
-Tant qu'aucun contenu n'est programmé (premier lancement, ou média
-supprimé), l'écran affiche l'adresse de l'interface d'administration, le nom
-`.local` et un QR code. Il se met à jour si l'adresse réseau change (toutes
-les 10 s) et disparaît dès qu'un contenu est enregistré. Une accroche laissée
-sur « écran noir » avec des boutons configurés reste un écran noir.
+As long as no content is scheduled (first start, or media deleted), the screen
+shows the address of the web interface, the `.local` name and a QR code. It
+updates when the network address changes (every 10 s) and disappears as soon
+as content is saved. An attract left on "black screen" with triggers
+configured stays a black screen.
 
-Au démarrage, si le réseau n'est pas encore là à la fin de l'intro (le
-Wi-Fi met souvent ~50 s), le logo reste affiché jusqu'à 30 s en attendant une
-adresse. Passé ce délai, un écran « Pas de connexion réseau » affiche un
-diagnostic (Wi-Fi configuré ou non, câble Ethernet branché ou non) et les
-pistes de résolution ; il se met à jour dès que l'état change. Un lecteur
-configuré, lui, lit son contenu avec ou sans réseau. En filaire, la connexion
-est automatique (DHCP) et l'adresse filaire est affichée en priorité.
+At boot, if the network is not there yet at the end of the intro (Wi-Fi often
+takes ~50 s), the logo stays on screen for up to 30 s, waiting for an address.
+After that, a "No network connection" screen shows a diagnosis (Wi-Fi
+configured or not, Ethernet cable plugged in or not) and things to try; it
+updates as soon as the state changes. A configured player plays its content
+with or without a network. Wired, the connection is automatic (DHCP) and the
+wired address is shown first.
 
-L'écran s'ouvre sur une animation (~7 s) : un soleil, la lune qui l'éclipse,
-la couronne qui devient le logo, puis les informations. Elle est en deux
-parties enchaînées sans coupure : `assets/intro.mp4`, générique et livrée
-avec le projet, et une fin propre à l'adresse réseau, calculée par le lecteur
-en tâche de fond (~40 s sur un Pi 3, ~170 Mo de mémoire) puis mise en cache
-dans `data/`. En attendant, l'image fixe est affichée.
+The screen opens with an animation (~7 s): a sun, the moon eclipsing it, the
+corona turning into the logo, then the information. It has two parts chained
+seamlessly: `assets/intro.mp4`, generic and shipped with the project, and an
+ending specific to the network address, rendered by the player in the
+background (~40 s on a Pi 3, ~170 MB of memory) then cached in `data/`.
+Meanwhile, the still image is shown.
 
-Après une retouche de `brand.py` ou du début de l'animation dans `splash.py`,
-régénérer l'intro : `python3 splash.py intro` (quelques minutes sur un Pi 3).
+After changing `brand.py` or the beginning of the animation in `splash.py`,
+regenerate the intro: `python3 splash.py intro` (a few minutes on a Pi 3).
 
-## Matériel
+## Hardware
 
-Par défaut, bouton entre la GPIO et GND (pull-up interne activé par le
-lecteur). Le câblage vers 3V3 (pull-down) est sélectionnable dans l'interface.
-Les GPIO occupées par une fonction (UART, I2C, SPI...) ne sont pas proposées.
+By default, a button between the GPIO and GND (internal pull-up enabled by
+the player). Wiring to 3V3 (pull-down) can be selected in the interface. GPIOs
+used by an alternate function (UART, I2C, SPI...) are not offered.
 
-La section Système de l'interface affiche l'état du Pi : température,
-alimentation insuffisante ou processeur ralenti (maintenant ou depuis le
-démarrage), espace libre sur la carte SD, mémoire, charge et temps depuis le
-démarrage. Un Pi 3 ralentit vers 80 °C : prévoir un dissipateur dans un
-boîtier fermé.
+The System section of the interface shows the state of the Pi: temperature,
+under-voltage or throttled CPU (now or since boot), free space on the SD card,
+memory, load and uptime. A Pi 3 throttles around 80 °C: plan a heatsink in a
+closed case.
 
-### Écran en portrait
+### Portrait screen
 
-Le lecteur ne tourne pas l'image : sur un Pi 3, la vidéo passe directement
-sur un plan d'affichage matériel qui ne sait pas la tourner, et la rotation
-par le GPU fait perdre 15 à 25 % des images en 1080p. Pour un écran monté en
-portrait, exportez le contenu déjà tourné (vidéo 1920×1080 dont l'image est
-couchée), par exemple :
+The player does not rotate the picture: on a Pi 3, video goes straight to a
+hardware display plane that cannot rotate it, and rotating on the GPU drops
+15 to 25 % of the frames in 1080p. For a screen mounted in portrait, export the
+content already rotated (a 1920×1080 video with the picture lying on its
+side), for example:
 
-    ffmpeg -i portrait.mp4 -vf transpose=2 -c:a copy pour-ecran-tourne.mp4
+    ffmpeg -i portrait.mp4 -vf transpose=2 -c:a copy for-rotated-screen.mp4
 
-(`transpose=1` si l'écran est tourné dans l'autre sens.) Les sous-titres
-doivent alors être incrustés dans l'image.
+(`transpose=1` if the screen is rotated the other way.) Subtitles must then be
+burnt into the picture.
 
-## Conversion automatique des vidéos
+## Automatic video conversion
 
-Chaque vidéo importée est analysée puis, si besoin, convertie en H.264
-(décodé matériellement par le Pi 3) dans un MP4, en conservant la résolution
-et la cadence d'origine. Seule exception : au-delà de 1080p, l'image est
-réduite à 1080p, limite du décodeur. Une vidéo déjà adaptée est gardée telle
-quelle, sans réencodage.
+Each uploaded video is analysed and, if needed, converted to H.264
+(hardware-decoded by the Pi) in an MP4, keeping the original resolution and
+frame rate. Only exception: above 1080p, the picture is scaled down to 1080p,
+the decoder limit. A video already suitable is kept as is, without
+re-encoding.
 
-- Encodeur matériel du Pi (`h264_v4l2m2m`), ~10 Mb/s en 1080p25 ;
-  x264 en secours si l'encodeur matériel refuse la source.
-- Compter ~2,5 s de conversion par seconde de vidéo 1080p (plus pour du
-  HEVC ou du ProRes, dont le décodage est logiciel).
-- La conversion tourne en priorité basse : la lecture en cours n'est pas
-  perturbée. Une seule conversion à la fois, les autres attendent.
-- Le fichier d'origine est supprimé une fois converti. Il est gardé dans
-  `media/.incoming/` tant que la conversion n'est pas terminée : après un
-  redémarrage, elle reprend automatiquement.
+- Hardware encoder of the Pi (`h264_v4l2m2m`), ~10 Mb/s in 1080p25; x264 as a
+  fallback when the hardware encoder rejects the source.
+- Count ~2.5 s of conversion per second of 1080p video on a Pi 3 (more for
+  HEVC or ProRes, which are decoded in software).
+- Conversion runs at low priority: playback is not disturbed. One conversion
+  at a time, the others wait.
+- The original file is deleted once converted. It is kept in
+  `media/.incoming/` until the conversion is over: after a reboot, it resumes
+  automatically.
 
-Sur un **Raspberry Pi 3** (ou Zero 2), la conversion sature le Pi (processeur,
-1 Go de mémoire partagé avec la lecture) : l'interface recommande alors de
-convertir sur l'ordinateur avant l'envoi, avec cette commande, dont le
-résultat est rangé tel quel :
+On a **Raspberry Pi 3** (or Zero 2), conversion saturates the Pi (CPU, 1 GB of
+memory shared with playback): the interface then recommends converting on the
+computer before uploading, with this command, whose result is stored as is:
 
-    ffmpeg -i ma-video.mov -vf "yadif=deint=interlaced,scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p" -c:v libx264 -preset medium -crf 20 -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart sortie.mp4
+    ffmpeg -i input.mov -vf "yadif=deint=interlaced,scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p" -c:v libx264 -preset medium -crf 20 -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart output.mp4
 
-Sans ffmpeg : [HandBrake](https://handbrake.fr/) (gratuit, avec interface),
-préréglage **General › Fast 1080p30**, format MP4 « Optimisé pour le Web »
-(H.264, AAC, 1080p et 30 images/s au plus).
+Without ffmpeg: [HandBrake](https://handbrake.fr/) (free, with an interface),
+**General › Fast 1080p30** preset, MP4 format "Web Optimized" (H.264, AAC,
+1080p and 30 frames/s at most).
 
-Sur un Pi 4, la conversion sur le lecteur se passe bien.
+On a Pi 4, conversion on the player works well.
 
-## Sous-titres
+## Subtitles
 
-Fichiers .srt (ainsi que .vtt et .ass) envoyés depuis la médiathèque, puis
-associés à une vidéo (un fichier par vidéo). Un .srt portant le même nom
-qu'une vidéo lui est proposé automatiquement. Les fichiers sont convertis en
-UTF-8 à l'envoi (les .srt Windows en cp1252 sont gérés). Taille et fond sombre
-se règlent dans l'interface ; police DejaVu Sans.
+.srt files (as well as .vtt and .ass) uploaded from the media library, then
+linked to a video (one file per video). An .srt with the same name as a video
+is linked automatically. Files are converted to UTF-8 on upload (Windows .srt
+files in cp1252 are handled). Size and dark background are set in the
+interface; DejaVu Sans font.
 
-## Commandes utiles
+## Useful commands
 
     sudo systemctl restart videoplayer videoplayer-web
     journalctl -u videoplayer -f
+
+## License
+
+[GNU General Public License v3.0](LICENSE).

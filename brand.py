@@ -1,19 +1,19 @@
-"""Identité DarkSign : logo (éclipse) et mot-symbole.
+"""DarkSign identity: logo (eclipse) and wordmark.
 
-Le symbole est une éclipse : un disque sombre passe devant un soleil et n'en
-laisse qu'une couronne de lumière. « bright » devient « dark ».
+The symbol is an eclipse: a dark disc passes in front of a sun and only
+leaves a ring of light. "bright" becomes "dark".
 """
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_DIR = "/usr/share/fonts/opentype/inter/"
 
-BG = np.array([11, 12, 15], np.float32)          # noir bleuté
+BG = np.array([11, 12, 15], np.float32)          # bluish black
 MOON = np.array([6, 7, 9], np.float32)
 TEXT = (236, 239, 243)
 MUTED = (139, 149, 161)
-ACCENT = (255, 176, 84)                           # ambre, pour textes et interface
-# rampe de la lumière : ambre -> blanc chaud quand ça sature
+ACCENT = (255, 176, 84)                           # amber, for texts and UI
+# light ramp: amber -> warm white when it saturates
 GLOW = np.array([255, 150, 58], np.float32)
 HOT = np.array([255, 245, 230], np.float32)
 RIM = np.array([1.0, 0.72, 0.42], np.float32)
@@ -38,10 +38,10 @@ def _smoothstep(x):
 
 
 class Eclipse:
-    """Moteur de rendu de l'éclipse dans une zone (w, h), soleil au centre.
+    """Eclipse renderer in a (w, h) area, sun at the centre.
 
-    Les champs lumineux sont calculés une fois ; chaque image ne fait que
-    décaler ceux de la lune et les combiner, ce qui reste rapide sur un Pi 3.
+    The light fields are computed once; each frame only shifts the moon's
+    fields and combines them, which stays fast on a Pi 3.
     """
 
     def __init__(self, w, h, radius, travel=3.0):
@@ -61,7 +61,7 @@ class Eclipse:
         self.window = _smoothstep((edge - np.sqrt(dx * dx + dy * dy))
                                   / (edge * 0.45)).astype(f32)
 
-        # champs de la lune, calculés sur une zone élargie puis découpés
+        # moon fields, computed over a wider area then cropped
         self.max_shift = int(np.ceil(travel * radius))
         mw = w + 2 * self.max_shift
         myy, mxx = np.mgrid[0:h, 0:mw].astype(f32)
@@ -75,7 +75,7 @@ class Eclipse:
         self.inside = np.clip((1 - rm) * radius * 1.015 / 1.2, 0, 1).astype(f32)
         self.rim = (np.exp(-np.clip(1 - rm, 0, None) / 0.02) * 18).astype(f32)
 
-        # éclat « bague de diamant » : petit motif ajouté à la bonne position
+        # "diamond ring" flash: small pattern added at the right position
         s = int(radius * 0.9)
         pyy, pxx = np.mgrid[-s:s + 1, -s:s + 1].astype(f32)
         d2 = (pxx ** 2 + pyy ** 2) / radius ** 2
@@ -84,7 +84,7 @@ class Eclipse:
         self.spark = (4.0 * np.exp(-d2 / 0.004) + 1.2 * np.exp(-d2 / 0.05)
                       + 0.9 * rays).astype(f32)
 
-    # intensité lumineuse -> couleur, par table : un seul canal à calculer
+    # light intensity -> colour, through a table: a single channel to compute
     LUT_MAX, LUT_SIZE = 8.0, 2048
     _lut = None
 
@@ -101,7 +101,7 @@ class Eclipse:
 
     def frame(self, moon_dx=0.0, sun=0.0, corona=1.0, spark=0.0,
               spark_angle=np.pi, haze=0.0):
-        """Image (h, w, 3) uint8. moon_dx en rayons (0 = totalité)."""
+        """Image (h, w, 3) uint8. moon_dx in radii (0 = totality)."""
         shift = int(round(moon_dx * self.radius))
         a = self.max_shift - shift
         sl = np.s_[:, a:a + self.w]
@@ -123,15 +123,15 @@ class Eclipse:
                                                           x0 - sx + s:x1 - sx + s]
         light *= self.window
 
-        # la lune masque la lumière ; son bord capte un reflet ambré
+        # the moon hides the light; its edge catches an amber reflection
         inside = self.inside[sl]
         light *= 1 - inside
         light += inside * self.rim[sl] * (corona * 0.02)
         idx = np.minimum(light * (self.LUT_SIZE / self.LUT_MAX),
                          self.LUT_SIZE - 1).astype(np.int16)
         rgb = self.lut()[idx]
-        # assombrit le disque lunaire, seulement devant la lumière : sur le fond
-        # nu, la lune reste invisible (comme une vraie)
+        # darken the moon disc, only in front of the light: over the bare
+        # background the moon stays invisible (like a real one)
         disc = inside > 0
         behind = np.clip(self.sun[disc] * max(sun, corona * 0.6) * 3 - 0.3, 0, 1)
         rgb[disc] = (rgb[disc] * (1 - 0.45 * inside[disc] * behind)[:, None]
@@ -140,7 +140,7 @@ class Eclipse:
 
 
 def wordmark(height, color=TEXT):
-    """Mot-symbole « darksign » : dark en fin, sign en gras. Image RGBA."""
+    """"darksign" wordmark: dark in light weight, sign in bold. RGBA image."""
     light = font("InterDisplay-Light.otf", height)
     bold = font("InterDisplay-SemiBold.otf", height)
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
@@ -155,22 +155,22 @@ def wordmark(height, color=TEXT):
 
 
 def mark(radius):
-    """Symbole seul (éclipse en totalité) sur fond BG, avec sa marge de halo."""
+    """Symbol alone (total eclipse) on a BG background, with its glow margin."""
     size = int(radius * 5)
     arr = Eclipse(size, size, radius, travel=0).frame(corona=1.0)
     return Image.fromarray(arr, "RGB")
 
 
 def lockup_geometry(text_height):
-    """Dimensions du logo complet pour une hauteur de texte donnée."""
+    """Dimensions of the full logo for a given text height."""
     radius = text_height * 0.62
     gap = text_height * 0.55
     return radius, gap
 
 
 def lockup(text_height):
-    """Symbole + mot-symbole sur fond BG. Renvoie (image, marge) : la marge
-    est le halo qui déborde autour du disque, à retirer pour aligner le logo."""
+    """Symbol + wordmark on a BG background. Return (image, margin): the
+    margin is the glow spilling around the disc, to remove to align the logo."""
     radius, gap = lockup_geometry(text_height)
     m = mark(radius)
     w = wordmark(int(text_height))

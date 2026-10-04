@@ -1,30 +1,30 @@
 #!/usr/bin/python3
-"""darksign : point d'accès Wi-Fi du lecteur (hostapd + dnsmasq).
+"""darksign: Wi-Fi access point of the player (hostapd + dnsmasq).
 
-Installé par install.sh dans /usr/local/sbin (appartient à root) et lancé par
-le service darksign-ap.service, que l'interface web démarre et arrête via sudo.
+Installed by install.sh in /usr/local/sbin (owned by root) and run by the
+darksign-ap.service unit, which the web backend starts and stops via sudo.
 
-    darksign-ap run CONFIG.json   prépare le Wi-Fi, lance dnsmasq puis hostapd
-    darksign-ap cleanup           arrête dnsmasq, retire la redirection du port
-                                  80, rend le Wi-Fi à NetworkManager
-    darksign-ap config CONFIG.json  affiche la configuration hostapd (test,
-                                  mot de passe masqué)
+    darksign-ap run CONFIG.json     prepare the Wi-Fi, start dnsmasq then hostapd
+    darksign-ap cleanup             stop dnsmasq, remove the port 80 redirect,
+                                    give the Wi-Fi back to NetworkManager
+    darksign-ap config CONFIG.json  print the hostapd configuration (test,
+                                    password masked)
 
-Pourquoi hostapd plutôt que le point d'accès de NetworkManager : celui-ci
-annonce aussi l'authentification PSK-SHA256, que la puce du Pi 3 (BCM43430,
-sans PMF) ne gère pas ; les balises émises par son firmware ne correspondent
-alors plus au message 3/4 de l'échange WPA2 et les téléphones (Android,
-iPhone), stricts sur ce point, abandonnent. Ici : WPA2-PSK seul, CCMP, sans PMF.
+Why hostapd rather than NetworkManager's access point: the latter also
+advertises PSK-SHA256 authentication, which the Pi 3 chip (BCM43430, no PMF)
+does not support; the beacons sent by its firmware then no longer match
+message 3/4 of the WPA2 handshake and phones (Android, iPhone), strict on
+this point, give up. Here: WPA2-PSK only, CCMP, no PMF.
 
-Les téléphones testent l'accès à Internet de chaque Wi-Fi (Android :
-connectivitycheck.gstatic.com/generate_204, Apple : captive.apple.com…) et,
-sans réponse, envoient tout le trafic par les données mobiles, y compris
-vers 10.42.0.1. Sur ce réseau, tous les noms DNS pointent donc vers le
-lecteur et le port 80 est redirigé vers son interface (8080), qui répond à
-ces tests (web.py) : le téléphone garde le Wi-Fi du lecteur.
+Phones check the Internet access of each Wi-Fi network (Android:
+connectivitycheck.gstatic.com/generate_204, Apple: captive.apple.com...) and,
+without an answer, send all traffic over mobile data, including to
+10.42.0.1. On this network every DNS name therefore points to the player and
+port 80 is redirected to its web interface (8080), which answers these
+checks (web.py): the phone keeps using the player's Wi-Fi.
 
-La configuration du lecteur est modifiable par son utilisateur : ce script
-n'importe aucun code du projet et valide strictement nom et mot de passe.
+The player configuration can be edited by its user: this script imports no
+project code and strictly validates the name and password.
 """
 import json
 import os
@@ -49,38 +49,38 @@ def fail(msg):
 
 
 def wifi_interface():
-    """Première interface Wi-Fi (wlan0 en général)."""
+    """First Wi-Fi interface (usually wlan0)."""
     out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
     for line in out.splitlines():
         line = line.strip()
         if line.startswith("Interface "):
             return line.split()[1]
-    fail("aucune interface Wi-Fi")
+    fail("no Wi-Fi interface")
 
 
 def settings(path):
-    """Nom (en octets) et mot de passe du point d'accès, validés."""
+    """Access point name (bytes) and password, validated."""
     try:
         with open(path) as f:
             cfg = json.load(f)
     except (OSError, ValueError) as e:
-        fail(f"configuration illisible : {e}")
+        fail(f"unreadable configuration: {e}")
     net = cfg.get("network") or {}
-    # même règle que common.ap_ssid : nom réglé, sinon nom du lecteur,
-    # sinon nom d'hôte ; 32 octets au plus
+    # same rule as common.ap_ssid: configured name, else player name, else
+    # hostname; 32 bytes at most
     name = net.get("ap_ssid") or cfg.get("name") or socket.gethostname()
     if not isinstance(name, str) or any(ord(c) < 32 or ord(c) == 127 for c in name):
-        fail("nom du point d'accès invalide")
+        fail("invalid access point name")
     ssid = name.encode()
     while len(ssid) > 32:
         name = name[:-1]
         ssid = name.encode()
     if not ssid:
-        fail("nom du point d'accès vide")
+        fail("empty access point name")
     password = net.get("ap_password")
     if not (isinstance(password, str) and 8 <= len(password) <= 63
             and all(32 <= ord(c) < 127 for c in password)):
-        fail("mot de passe du point d'accès invalide (8 à 63 caractères ASCII)")
+        fail("invalid access point password (8 to 63 ASCII characters)")
     return ssid, password
 
 
@@ -88,7 +88,7 @@ def hostapd_conf(iface, ssid, password):
     return "\n".join([
         f"interface={iface}",
         "driver=nl80211",
-        f"ssid2={ssid.hex()}",          # hexadécimal : aucun caractère spécial
+        f"ssid2={ssid.hex()}",          # hexadecimal: no special characters
         "utf8_ssid=1",
         "hw_mode=g",
         f"channel={CHANNEL}",
@@ -96,10 +96,10 @@ def hostapd_conf(iface, ssid, password):
         "wmm_enabled=1",
         "auth_algs=1",
         "ignore_broadcast_ssid=0",
-        "wpa=2",                         # WPA2 seul
-        "wpa_key_mgmt=WPA-PSK",          # pas de PSK-SHA256 (voir plus haut)
+        "wpa=2",                         # WPA2 only
+        "wpa_key_mgmt=WPA-PSK",          # no PSK-SHA256 (see above)
         "rsn_pairwise=CCMP",
-        "ieee80211w=0",                  # pas de PMF : non géré par la puce
+        "ieee80211w=0",                  # no PMF: not supported by the chip
         f"wpa_passphrase={password}",
         "",
     ])
@@ -118,17 +118,17 @@ def cmd_run(path):
     with os.fdopen(fd, "w") as f:
         f.write(hostapd_conf(iface, ssid, password))
 
-    # NetworkManager lâche le Wi-Fi le temps du point d'accès (le câble
-    # Ethernet reste géré) ; réglage non persistant : rendu au redémarrage
+    # NetworkManager lets go of the Wi-Fi while the access point runs (the
+    # Ethernet cable stays managed); not persistent: back after a reboot
     run(["nmcli", "device", "set", iface, "managed", "no"], check=False)
     time.sleep(1)
     run(["ip", "addr", "flush", "dev", iface], check=False)
     run(["ip", "addr", "add", f"{ADDRESS}/{PREFIX}", "dev", iface])
     run(["ip", "link", "set", iface, "up"])
 
-    # port 80 de ce réseau -> interface du lecteur (tests de connectivité des
-    # téléphones, et toute adresse tapée mène à l'interface)
-    run(["nft", "delete", "table", "ip", NFT_TABLE], check=False)   # reliquat
+    # port 80 of this network -> player web interface (phone connectivity
+    # checks, and any address typed leads to the interface)
+    run(["nft", "delete", "table", "ip", NFT_TABLE], check=False)   # leftover
     subprocess.run(["nft", "-f", "-"], check=True, text=True, input=f"""
 table ip {NFT_TABLE} {{
     chain prerouting {{
@@ -138,10 +138,10 @@ table ip {NFT_TABLE} {{
 }}
 """)
 
-    # DHCP et DNS sur le seul réseau du point d'accès. Autoritaire : un
-    # appareil qui redemande un ancien bail reçoit un refus immédiat et en
-    # redemande un, au lieu d'attendre indéfiniment. Tous les noms pointent
-    # vers le lecteur (pas d'Internet ici, rien à transmettre).
+    # DHCP and DNS on the access point network only. Authoritative: a
+    # device asking for an old lease gets an immediate refusal and asks for a
+    # new one, instead of waiting forever. Every name points to the player
+    # (no Internet here, nothing to forward).
     run(["dnsmasq", "--conf-file=/dev/null", f"--interface={iface}",
          "--bind-interfaces", "--except-interface=lo",
          f"--listen-address={ADDRESS}", f"--dhcp-range={DHCP_RANGE}",
@@ -152,9 +152,9 @@ table ip {NFT_TABLE} {{
          f"--dhcp-leasefile={RUN_DIR}/leases",
          f"--pid-file={RUN_DIR}/dnsmasq.pid", "--log-dhcp"])
 
-    print(f"point d'accès « {ssid.decode(errors='replace')} » sur {iface}, "
+    print(f'access point "{ssid.decode(errors="replace")}" on {iface}, '
           f"{ADDRESS}", flush=True)
-    os.execv("/usr/sbin/hostapd", ["hostapd", conf])   # au premier plan
+    os.execv("/usr/sbin/hostapd", ["hostapd", conf])   # in the foreground
 
 
 def cmd_cleanup():
@@ -166,7 +166,7 @@ def cmd_cleanup():
     run(["nft", "delete", "table", "ip", NFT_TABLE], check=False)
     iface = wifi_interface()
     run(["ip", "addr", "flush", "dev", iface], check=False)
-    # le Wi-Fi revient à NetworkManager, qui rejoint un réseau mémorisé
+    # the Wi-Fi goes back to NetworkManager, which joins a saved network
     run(["nmcli", "device", "set", iface, "managed", "yes"], check=False)
     for name in ("hostapd.conf", "dnsmasq.pid"):
         try:

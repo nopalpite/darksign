@@ -1,4 +1,4 @@
-"""Éléments partagés entre le lecteur (player.py) et le backend web (web.py)."""
+"""Shared by the player (player.py) and the web backend (web.py)."""
 import json
 import os
 import re
@@ -18,17 +18,17 @@ VIDEO_EXT = {".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".mpg", ".mpeg", "
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"}
 SUBTITLE_EXT = {".srt", ".vtt", ".ass"}
 
-# messages UDP réservés, valables dans tous les modes
-UDP_COMMANDS = {"pause": "pause", "play": "reprise", "restart": "relance"}
+# reserved UDP messages, valid in every mode
+UDP_COMMANDS = ("pause", "play", "restart")
 UDP_MAX_LEN = 64
 
-IMAGE_DURATION = 6   # s : affichage par défaut d'une image dans une playlist
+IMAGE_DURATION = 6   # s: default display time of an image in a playlist
 IMAGE_DURATION_MAX = 3600
 
-# taille des sous-titres (pixels mpv, référence 720 lignes)
+# subtitle sizes (mpv pixels, for a 720-line reference)
 SUBTITLE_SIZES = {"small": 36, "medium": 48, "large": 64}
 
-# BCM -> broche physique du connecteur 40 broches
+# BCM -> physical pin of the 40-pin header
 PHYSICAL = {
     2: 3, 3: 5, 4: 7, 5: 29, 6: 31, 7: 26, 8: 24, 9: 21, 10: 19, 11: 23,
     12: 32, 13: 33, 14: 8, 15: 10, 16: 36, 17: 11, 18: 12, 19: 35, 20: 38,
@@ -36,29 +36,30 @@ PHYSICAL = {
 }
 
 DEFAULT_CONFIG = {
-    # nom du lecteur (« Hall A ») : affiché, et décliné en nom d'hôte (hall-a,
-    # http://hall-a.local:8080) et en nom du Wi-Fi du point d'accès.
-    # Vide : le nom d'hôte actuel.
+    # player name ("Hall A"): displayed, and turned into the hostname (hall-a,
+    # http://hall-a.local:8080) and the access point Wi-Fi name.
+    # Empty: the current hostname.
     "name": None,
+    # player language: TV splash screen (the web UI follows each browser)
+    "language": "en",
     "mode": "loop",                # "loop" (playlist) | "interactive"
     "volume": 100,
     "audio_device": "auto",
-    "udp_port": 5000,              # messages UDP : boutons et commandes
-    # réseau : Wi-Fi du lieu (client) ou point d'accès du lecteur (ap). Nom du
-    # point d'accès vide : celui du lecteur ; mot de passe généré au premier
-    # démarrage (network.py)
+    "udp_port": 5000,              # UDP messages: triggers and commands
+    # network: venue Wi-Fi (client) or the player's own access point (ap).
+    # Empty access point name: the player name; password generated on first
+    # start (network.py)
     "network": {"mode": "client", "ap_ssid": None, "ap_password": None},
-    # playlist : une seule entrée tourne en boucle infinie ; sinon les entrées
-    # s'enchaînent dans l'ordre, chaque vidéo répétée « repeat » fois, chaque
-    # image affichée « duration » secondes
+    # playlist: a single entry loops forever; otherwise entries play in
+    # order, each video "repeat" times, each image for "duration" seconds
     "loop": {"items": [], "muted": False},   # [{"media": "a.mp4", "repeat": 1}]
     "interactive": {
         "attract": None,
         "attract_muted": True,
         "triggers_muted": False,
         "interruptible": True,
-        "active_low": True,        # bouton relié à GND, pull-up interne
-        # déclencheurs : broche GPIO et/ou message UDP -> vidéo
+        "active_low": True,        # button wired to GND, internal pull-up
+        # triggers: GPIO pin and/or UDP message -> video
         "triggers": [],            # [{"gpio": 17, "udp": "intro", "media": "video.mp4"}]
     },
     "subtitles": {},               # {"video.mp4": "video.srt"}
@@ -67,17 +68,17 @@ DEFAULT_CONFIG = {
 
 
 def trigger_label(t):
-    """Nom lisible d'un déclencheur : « GPIO17 », « UDP intro » ou les deux."""
+    """Language-neutral trigger name: "GPIO17", 'UDP "intro"' or both."""
     parts = []
     if t.get("gpio") is not None:
         parts.append(f"GPIO{t['gpio']}")
     if t.get("udp"):
-        parts.append(f"UDP « {t['udp']} »")
-    return " / ".join(parts) or "déclencheur vide"
+        parts.append(f'UDP "{t["udp"]}"')
+    return " / ".join(parts) or "-"
 
 
 def udp_key(message):
-    """Forme comparable d'un message UDP : sans espaces autour ni majuscules."""
+    """Comparable form of a UDP message: trimmed, lower case."""
     return (message or "").strip().lower()
 
 
@@ -93,7 +94,7 @@ def media_kind(name):
 
 
 def fps_of(stream):
-    """Cadence d'une piste vidéo ffprobe (ex. "30000/1001" -> 29.97)."""
+    """Frame rate of an ffprobe video stream ("30000/1001" -> 29.97)."""
     for key in ("avg_frame_rate", "r_frame_rate"):
         num, _, den = (stream.get(key) or "0/0").partition("/")
         if den and float(den):
@@ -106,25 +107,24 @@ def player_name(cfg):
 
 
 def hostname_for(name):
-    """Nom d'hôte tiré du nom du lecteur : « Hall A (Expo) » -> « hall-a-expo »."""
+    """Hostname derived from the player name: "Hall A (Expo)" -> "hall-a-expo"."""
     ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
     return slug[:63].rstrip("-") or "darksign"
 
 
 def ap_ssid(cfg):
-    """Nom du Wi-Fi du point d'accès : réglé, sinon le nom du lecteur."""
+    """Access point Wi-Fi name: the configured one, else the player name."""
     name = cfg["network"].get("ap_ssid") or player_name(cfg)
-    while len(name.encode()) > 32:   # limite du Wi-Fi, en octets
+    while len(name.encode()) > 32:   # Wi-Fi limit, in bytes
         name = name[:-1]
     return name
 
 
 def hdmi_audio_device(name):
-    """Sortie HDMI : périphérique alsa « hdmi » plutôt que « plughw »."""
-    # plughw envoie un en-tête IEC958 sans fréquence d'échantillonnage ;
-    # certains projecteurs (EPSON) restent alors muets. Le périphérique hdmi
-    # le remplit.
+    """HDMI output: the alsa "hdmi" device rather than "plughw"."""
+    # plughw sends an IEC958 header without the sample rate: some projectors
+    # (EPSON) then stay silent. The hdmi device fills it in.
     prefix = "alsa/plughw:CARD=vc4hdmi"
     if name.startswith(prefix):
         return "alsa/hdmi:CARD=vc4hdmi" + name[len(prefix):]
@@ -142,14 +142,14 @@ def load_config():
             cfg[key].update(value)
         else:
             cfg[key] = value
-    # nom du point d'accès généré avant le nom du lecteur : il suit désormais
-    # ce nom (vide)
+    # access point name generated before the player name existed: it now
+    # follows that name (empty)
     if cfg["network"].get("ap_ssid") == f"darksign-{socket.gethostname()}":
         cfg["network"]["ap_ssid"] = None
-    # configurations enregistrées avant le passage au périphérique hdmi : le
-    # lecteur et l'interface (liste des sorties) voient la même valeur
+    # configurations saved before the switch to the hdmi device: the player
+    # and the web UI (list of outputs) see the same value
     cfg["audio_device"] = hdmi_audio_device(cfg.get("audio_device") or "auto")
-    # ancien format de la boucle simple : un seul média
+    # old "simple loop" format: a single media
     old = cfg["loop"].pop("media", None)
     if old and not cfg["loop"]["items"]:
         cfg["loop"]["items"] = [{"media": old, "repeat": 1}]
@@ -158,7 +158,7 @@ def load_config():
 
 def save_config(cfg):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # écriture atomique : le lecteur ne lit jamais un fichier à moitié écrit
+    # atomic write: the player never reads a half-written file
     fd, tmp = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
     with os.fdopen(fd, "w") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -166,7 +166,7 @@ def save_config(cfg):
 
 
 def reserved_gpios():
-    """GPIO utilisées par une fonction alternative (UART, I2C, SPI...)."""
+    """GPIOs used by an alternate function (UART, I2C, SPI...)."""
     out = subprocess.run(["pinctrl", "get", "2-27"],
                          capture_output=True, text=True).stdout
     reserved = {}
@@ -187,7 +187,7 @@ def available_gpios():
 
 
 def network_addresses():
-    """Adresses IPv4 du Pi (hors boucle locale), interface filaire en tête."""
+    """IPv4 addresses of the Pi (no loopback), wired interface first."""
     out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
                          capture_output=True, text=True).stdout
     found = []
@@ -199,8 +199,8 @@ def network_addresses():
 
 
 def network_status():
-    """Diagnostic réseau (pour l'écran « pas de connexion ») : Wi-Fi configuré
-    et son état, câble Ethernet branché ou non."""
+    """Network diagnosis (for the "no connection" screen): configured Wi-Fi
+    and its state, Ethernet cable plugged in or not."""
     def nmcli(*args):
         return subprocess.run(["nmcli", "-t", *args], capture_output=True,
                               text=True).stdout.splitlines()
@@ -232,7 +232,7 @@ def mdns_available():
 
 
 def pi_model():
-    """Modèle du Raspberry Pi (« Raspberry Pi 3 Model B Rev 1.2 »)."""
+    """Raspberry Pi model ("Raspberry Pi 3 Model B Rev 1.2")."""
     try:
         with open("/proc/device-tree/model") as f:
             return f.read().strip("\0\n ")
@@ -241,18 +241,18 @@ def pi_model():
 
 
 def slow_transcode():
-    """Pi 3 et Zero 2 (même puce, 1 Go au plus) : convertir une vidéo sur le
-    Pi les sature ; mieux vaut l'envoyer déjà au bon format."""
+    """Pi 3 and Zero 2 (same chip, 1 GB at most): converting a video on the
+    Pi saturates it; better upload it in the right format already."""
     model = pi_model()
     return "Raspberry Pi 3" in model or "Zero 2" in model
 
 
 def sudo_allowed(command):
-    """La commande exacte figure-t-elle dans une règle sudo sans mot de passe
-    (celles d'install.sh) ? « sudo -l COMMANDE » ne suffit pas : il répond oui
-    aussi pour une règle qui demande un mot de passe (groupe sudo)."""
+    """Is this exact command in a password-less sudo rule (install.sh's)?
+    "sudo -l COMMAND" is not enough: it also says yes for a rule that asks
+    for a password (sudo group)."""
     out = subprocess.run(["sudo", "-n", "-l"], capture_output=True, text=True).stdout
-    rules = []   # une règle par « (root) … », lignes de continuation rattachées
+    rules = []   # one rule per "(root) ...", continuation lines appended
     for line in out.splitlines():
         if line.strip().startswith("("):
             rules.append(line.strip())
@@ -266,7 +266,7 @@ def sudo_allowed(command):
 
 
 def player_request(cmd, **args):
-    """Envoie une commande au lecteur via le socket unix, renvoie sa réponse."""
+    """Send a command to the player over the unix socket, return its reply."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.settimeout(3)
         s.connect(SOCKET_PATH)

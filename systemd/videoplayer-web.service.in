@@ -1,6 +1,6 @@
 [Unit]
 StartLimitIntervalSec=0
-Description=Interface web du lecteur vidéo (port 8080)
+Description=DarkSign web interface (port 8080)
 After=network.target
 
 [Service]
@@ -11,11 +11,11 @@ ExecStart=/usr/bin/python3 @DIR@/web.py
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=2
-# conversions : au-delà de ce plafond, ffmpeg est arrêté plutôt que de bloquer le Pi
+# conversions: above this ceiling, ffmpeg is stopped rather than freezing the Pi
 MemoryHigh=300M
 MemoryMax=400M
-# actif même sans contrôleur mémoire : en cas de manque, la conversion est
-# arrêtée en premier (ffmpeg hérite de ce réglage)
+# works even without a memory controller: when memory runs out, the
+# conversion is stopped first (ffmpeg inherits this setting)
 OOMScoreAdjust=500
 
 [Install]

@@ -1,6 +1,6 @@
-# médias envoyés depuis l'interface (volumineux)
+# media uploaded from the web interface (large)
 media/
-# état propre à l'installation : configuration, liste de boucle, socket
+# installation-specific state: configuration, loop lists, socket
 data/
 __pycache__/
 *.pyc
