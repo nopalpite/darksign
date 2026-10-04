@@ -319,9 +319,13 @@ class Player:
             try:
                 ev, *args = self.events.get(timeout=1)
             except queue.Empty:
-                if self._check_display():
-                    break
-                self._refresh_splash()
+                try:
+                    if self._check_display():
+                        break
+                    self._refresh_splash()
+                except Exception as e:  # pas plus ici qu'ailleurs
+                    log.exception("erreur pendant la surveillance périodique")
+                    self.last_error = str(e)
                 continue
             try:
                 if ev == "quit":
@@ -550,8 +554,7 @@ class Player:
         return not self._playable(inter["attract"]) and not any(
             self._playable(t.get("media")) for t in inter["triggers"])
 
-    @staticmethod
-    def _splash_key(addresses):
+    def _splash_key(self, addresses):
         # toute retouche du rendu (fichiers source, intro) invalide le cache
         sources = [BASE / "splash.py", BASE / "brand.py", SPLASH_INTRO]
         stamp = [f.stat().st_mtime if f.exists() else 0 for f in sources]

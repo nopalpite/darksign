@@ -259,14 +259,26 @@ class Supervisor:
 
     @staticmethod
     def _reconnect_client():
-        # une connexion arrêtée à la main n'est pas relancée d'elle-même :
-        # on demande au Wi-Fi de rejoindre le meilleur réseau mémorisé
-        dev = wifi_device()
-        if dev:
+        """Rejoint le premier réseau mémorisé à portée.
+
+        Pas de « nmcli device connect » : NetworkManager y choisit la
+        connexion de plus haute priorité… le point d'accès lui-même."""
+        try:
+            visible = {n["ssid"] for n in scan()}
+            saved = saved_networks()
+        except NetworkError as e:
+            log.info("recherche des réseaux impossible : %s", e)
+            return
+        for net in saved:
+            if net["ssid"] not in visible:
+                continue
             try:
-                nmcli("device", "connect", dev, timeout=45)
+                nmcli("connection", "up", net["name"], timeout=45)
+                log.info("Wi-Fi du lieu : connecté à « %s »", net["ssid"])
+                return
             except NetworkError as e:
-                log.info("aucun réseau Wi-Fi mémorisé joignable : %s", e)
+                log.info("connexion à « %s » impossible : %s", net["ssid"], e)
+        log.info("aucun réseau Wi-Fi mémorisé à portée")
 
     def _run(self):
         while True:
