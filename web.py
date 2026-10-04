@@ -14,7 +14,7 @@ from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
 from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR, ap_ssid,
-                    hostname_for, player_name,
+                    hostname_for, player_name, sudo_allowed,
                     SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, available_gpios,
                     fps_of, load_config, media_kind, player_request,
                     save_config, trigger_label, udp_key)
@@ -266,6 +266,35 @@ def index():
     return render_template("index.html")
 
 
+# --- tests de connectivité des appareils (point d'accès) --------------------------
+# Sur le point d'accès, tous les noms pointent vers le lecteur et le port 80 y
+# est redirigé (system/darksign-ap). Sans ces réponses, les téléphones jugent
+# le Wi-Fi « sans Internet » et passent par les données mobiles, même pour
+# joindre le lecteur. Android vérifie aussi Google en HTTPS, impossible ici :
+# il propose alors « Connexion limitée : se connecter quand même ».
+
+@app.get("/generate_204")
+@app.get("/gen_204")
+def probe_android():
+    return "", 204
+
+
+@app.get("/hotspot-detect.html")
+@app.get("/library/test/success.html")
+def probe_apple():
+    return "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"
+
+
+@app.get("/connecttest.txt")
+def probe_windows():
+    return "Microsoft Connect Test", 200, {"Content-Type": "text/plain"}
+
+
+@app.get("/ncsi.txt")
+def probe_windows_legacy():
+    return "Microsoft NCSI", 200, {"Content-Type": "text/plain"}
+
+
 @app.get("/api/state")
 def api_state():
     return jsonify(
@@ -300,7 +329,7 @@ def api_network():
         saved = network.saved_networks()
     except network.NetworkError as e:
         saved, supervisor.status["error"] = [], str(e)
-    return jsonify(status=supervisor.status, saved=saved, allowed=network.allowed())
+    return jsonify(status=supervisor.status, saved=saved, allowed=network_allowed())
 
 
 @app.get("/api/network/scan")
@@ -363,7 +392,8 @@ def api_config():
         return jsonify(errors=["déclencheur : GPIO invalide"]), 400
     errors = validate(cfg)
     network_changed = network_settings(cfg) != old_network
-    if network_changed and not network.allowed():
+    ap_changed = network_settings(cfg)[1:] != old_network[1:]
+    if network_changed and not network_allowed():
         errors.append("réseau : droits manquants, relancez l'installateur "
                       "(sudo ./install.sh)")
     new_hostname = None
@@ -383,7 +413,7 @@ def api_config():
         if new_hostname:
             rename_host(new_hostname)
         if network_changed:
-            supervisor.apply(cfg)
+            supervisor.apply(cfg, ap_changed=ap_changed)
         reload_player()   # écran d'accueil : nouveau nom, nouveau réseau
 
     threading.Thread(target=apply, daemon=True).start()
@@ -396,9 +426,13 @@ def network_settings(cfg):
     return net["mode"], ap_ssid(cfg), net["ap_password"]
 
 
+def network_allowed():
+    """Wi-Fi du lieu (polkit) et point d'accès (sudo) : règles d'install.sh."""
+    return network.allowed() and network.ap_allowed()
+
+
 def rename_allowed():
-    return subprocess.run(["sudo", "-n", "-l", HOSTNAME_HELPER],
-                          capture_output=True).returncode == 0
+    return sudo_allowed(HOSTNAME_HELPER)
 
 
 def rename_host(hostname):
@@ -548,8 +582,7 @@ def system_health():
 
 def system_allowed(action):
     """Droit de redémarrer / éteindre (règle sudo posée par install.sh)."""
-    return subprocess.run(["sudo", "-n", "-l", SYSTEMCTL, action],
-                          capture_output=True).returncode == 0
+    return sudo_allowed(f"{SYSTEMCTL} {action}")
 
 
 @app.post("/api/system/<action>")
@@ -591,7 +624,7 @@ def start_network():
         cfg["network"]["ap_password"] = network.generate_password()
         save_config(cfg)
     supervisor = network.Supervisor()
-    if network.allowed():
+    if network_allowed():
         threading.Thread(target=supervisor.apply, args=(cfg,), daemon=True).start()
     else:
         supervisor.mode = cfg["network"]["mode"]

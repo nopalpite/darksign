@@ -231,6 +231,24 @@ def mdns_available():
                           ).returncode == 0
 
 
+def sudo_allowed(command):
+    """La commande exacte figure-t-elle dans une règle sudo sans mot de passe
+    (celles d'install.sh) ? « sudo -l COMMANDE » ne suffit pas : il répond oui
+    aussi pour une règle qui demande un mot de passe (groupe sudo)."""
+    out = subprocess.run(["sudo", "-n", "-l"], capture_output=True, text=True).stdout
+    rules = []   # une règle par « (root) … », lignes de continuation rattachées
+    for line in out.splitlines():
+        if line.strip().startswith("("):
+            rules.append(line.strip())
+        elif rules and line.startswith("    ") and line.strip():
+            rules[-1] += " " + line.strip()
+    for rule in rules:
+        _, sep, commands = rule.partition("NOPASSWD:")
+        if sep and command in (c.strip() for c in commands.split(",")):
+            return True
+    return False
+
+
 def player_request(cmd, **args):
     """Envoie une commande au lecteur via le socket unix, renvoie sa réponse."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:

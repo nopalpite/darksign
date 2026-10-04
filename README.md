@@ -7,7 +7,9 @@ des boutons sur les GPIO, administrée depuis une interface web.
 - `web.py` : interface d'administration sur le port 8080, service `videoplayer-web`
 - `common.py` : configuration, médias, GPIO disponibles, dialogue avec le lecteur
 - `transcode.py` : file de conversion des vidéos importées
-- `network.py` : Wi-Fi du lieu ou point d'accès autonome (NetworkManager)
+- `network.py` : Wi-Fi du lieu (NetworkManager) ou point d'accès autonome
+- `system/` : scripts root installés dans /usr/local/sbin (point d'accès,
+  nom d'hôte), appelés par l'interface via sudo
 - `splash.py` : écran d'accueil (image fixe et animation d'intro)
 - `brand.py` : identité DarkSign (logo éclipse, mot-symbole, rendu du halo)
 - `assets/intro.mp4` : intro animée générique (éclipse), générée par `splash.py intro`
@@ -99,9 +101,21 @@ et modifiables ensuite dans l'interface (section Réseau) :
   (généré à l'installation, modifiable) sont affichés sur l'écran d'accueil, avec un QR code pour
   rejoindre le réseau et un autre pour ouvrir l'interface.
 
-Le câble Ethernet fonctionne dans les deux modes. La gestion du réseau passe
-par NetworkManager ; install.sh autorise l'utilisateur du lecteur à le piloter
-(règle polkit `/etc/polkit-1/rules.d/50-darksign.rules`).
+Le câble Ethernet fonctionne dans les deux modes. Le Wi-Fi du lieu passe par
+NetworkManager (install.sh autorise l'utilisateur du lecteur à le piloter :
+règle polkit `/etc/polkit-1/rules.d/50-darksign.rules`). Le point d'accès est
+le service `darksign-ap` (hostapd + dnsmasq, script `system/darksign-ap`) :
+celui de NetworkManager annonce une authentification (PSK-SHA256) que la puce
+du Pi 3 ne gère pas, et les téléphones refusaient de s'y connecter. Ici :
+WPA2-PSK seul, CCMP, sans PMF.
+
+Sur le point d'accès, tous les noms DNS pointent vers le lecteur et le port 80
+mène à l'interface : les tests de connectivité des téléphones et ordinateurs
+reçoivent la réponse attendue, sinon ils jugeraient le réseau « sans Internet »
+et passeraient par les données mobiles, même pour joindre le lecteur. Android
+vérifie aussi Google en HTTPS, impossible hors ligne : s'il affiche
+« Connexion limitée », choisir « Se connecter quand même ». Un VPN actif sur
+l'appareil capte aussi le trafic local : le couper le temps de l'administration.
 
 ## Commandes UDP
 

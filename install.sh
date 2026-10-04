@@ -36,7 +36,7 @@ REPO_URL="${DARKSIGN_REPO:-https://github.com/nopalpite/videoplayer.git}"
 BRANCH="${DARKSIGN_BRANCH:-main}"
 PACKAGES=(git mpv python3-mpv python3-flask python3-libgpiod python3-pil
           python3-qrcode python3-numpy fonts-inter ffmpeg avahi-daemon
-          raspi-utils-core rsync dnsmasq-base polkitd)
+          raspi-utils-core rsync dnsmasq-base polkitd hostapd)
 BOOT_PARAMS=(quiet loglevel=3 logo.nologo vt.global_cursor_default=0
              consoleblank=0 systemd.show_status=false rd.udev.log_level=3
              udev.log_level=3)
@@ -137,6 +137,10 @@ export DEBIAN_FRONTEND=noninteractive
 run apt-get update -qq
 run apt-get install -y -qq --no-install-recommends "${PACKAGES[@]}"
 info "installés : ${PACKAGES[*]}"
+# hostapd ne sert qu'au point d'accès du lecteur (darksign-ap.service) : son
+# service par défaut prendrait le Wi-Fi au démarrage
+run systemctl disable --now -q hostapd.service 2>/dev/null || true
+run systemctl mask -q hostapd.service
 
 # --- 3. code ---------------------------------------------------------------------
 title "Code du lecteur"
@@ -201,8 +205,11 @@ info "$TARGET_USER : accès à l'écran (video, render), au son (audio) et aux G
 # et appartient à root : sinon la règle sudo permettrait de devenir root.
 helper=/usr/local/sbin/darksign-hostname
 run install -o root -g root -m 0755 "$INSTALL_DIR/system/darksign-hostname" "$helper"
+# point d'accès : hostapd + dnsmasq, démarré à la demande par l'interface web
+run install -o root -g root -m 0755 "$INSTALL_DIR/system/darksign-ap" /usr/local/sbin/darksign-ap
+ap="/usr/bin/systemctl start darksign-ap.service, /usr/bin/systemctl stop darksign-ap.service, /usr/bin/systemctl restart darksign-ap.service"
 sudoers=/etc/sudoers.d/darksign
-rule="$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, $helper"
+rule="$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, $helper, $ap"
 if [ "$DRY_RUN" = 1 ]; then
     echo "    (simulation) $sudoers : $rule"
 elif [ "$(cat "$sudoers" 2>/dev/null)" != "$rule" ]; then
@@ -212,7 +219,7 @@ elif [ "$(cat "$sudoers" 2>/dev/null)" != "$rule" ]; then
     install -m 0440 "$tmp" "$sudoers"
     rm -f "$tmp"
 fi
-info "$TARGET_USER : redémarrage, extinction et nom du Pi depuis l'interface web"
+info "$TARGET_USER : redémarrage, extinction, nom et point d'accès du Pi depuis l'interface web"
 
 # interface web : réseau (Wi-Fi du lieu, point d'accès autonome) via NetworkManager
 polkit_rule=/etc/polkit-1/rules.d/50-darksign.rules
@@ -315,7 +322,7 @@ fi
 
 # --- 7. services -----------------------------------------------------------------
 title "Services"
-for unit in videoplayer videoplayer-web; do
+for unit in videoplayer videoplayer-web darksign-ap; do
     template="$INSTALL_DIR/systemd/$unit.service.in"
     [ -f "$template" ] || [ "$DRY_RUN" = 1 ] || die "modèle introuvable : $template"
     if [ "$DRY_RUN" = 1 ]; then
@@ -328,7 +335,12 @@ done
 run systemctl daemon-reload
 run systemctl enable -q videoplayer videoplayer-web
 info "videoplayer (lecteur, démarré dès que l'écran est prêt) et videoplayer-web (port 8080)"
-for unit in videoplayer videoplayer-web; do   # mise à jour : nouveau code chargé
+# point d'accès des versions précédentes (profil NetworkManager) : remplacé
+# par darksign-ap.service, il reprendrait le Wi-Fi s'il restait
+if [ "$DRY_RUN" = 0 ] && nmcli -t -f NAME connection show 2>/dev/null | grep -qx darksign-ap; then
+    nmcli connection delete darksign-ap >/dev/null && info "ancien point d'accès NetworkManager supprimé"
+fi
+for unit in videoplayer videoplayer-web darksign-ap; do   # mise à jour : nouveau code chargé
     if systemctl is-active -q "$unit"; then
         run systemctl restart "$unit"
         info "$unit relancé"

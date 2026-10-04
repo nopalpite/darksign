@@ -1,7 +1,11 @@
 """Réseau du lecteur : Wi-Fi du lieu (client) ou point d'accès autonome.
 
-Tout passe par NetworkManager (nmcli). L'utilisateur du lecteur y a accès
-grâce à la règle polkit posée par install.sh.
+Le Wi-Fi du lieu passe par NetworkManager (nmcli), auquel l'utilisateur du
+lecteur a accès grâce à la règle polkit posée par install.sh. Le point
+d'accès est le service darksign-ap (hostapd + dnsmasq, voir
+system/darksign-ap), démarré et arrêté via sudo : celui de NetworkManager
+annonce une authentification que la puce du Pi 3 ne gère pas, et les
+téléphones refusent de s'y connecter.
 
   - mode « client » : le Pi rejoint un des réseaux Wi-Fi mémorisés (ou le
     câble Ethernet). Si aucun réseau n'est joignable pendant FALLBACK_DELAY,
@@ -16,11 +20,12 @@ import subprocess
 import threading
 import time
 
-from common import ap_ssid, load_config, network_addresses
+from common import ap_ssid, load_config, network_addresses, sudo_allowed
 
 log = logging.getLogger("network")
 
-AP_CONNECTION = "darksign-ap"   # profil NetworkManager du point d'accès
+AP_SERVICE = "darksign-ap.service"   # point d'accès (install.sh)
+AP_PROFILE = "darksign-ap"   # ancien profil NetworkManager du point d'accès
 AP_ADDRESS = "10.42.0.1"
 FALLBACK_DELAY = 90             # s sans aucun réseau avant le repli
 CHECK_EVERY = 5                 # s
@@ -104,18 +109,40 @@ def active_wifi():
     return name, addr
 
 
+def ap_active():
+    return subprocess.run(["systemctl", "is-active", "--quiet", AP_SERVICE]
+                          ).returncode == 0
+
+
+def ap_allowed():
+    """L'utilisateur peut-il démarrer le point d'accès (règle sudo) ?"""
+    return sudo_allowed(f"/usr/bin/systemctl start {AP_SERVICE}")
+
+
+def ap_control(action):
+    """Démarre, arrête ou relance le point d'accès."""
+    res = subprocess.run(["sudo", "-n", "/usr/bin/systemctl", action, AP_SERVICE],
+                         capture_output=True, text=True, timeout=60)
+    if res.returncode:
+        msg = res.stderr.strip()
+        if "password is required" in msg or "not allowed" in msg:
+            msg = "droits manquants : relancez l'installateur (sudo ./install.sh)"
+        raise NetworkError(f"point d'accès : {msg or action + ' impossible'}")
+    if action != "stop":
+        time.sleep(2)   # hostapd s'arrête aussitôt si la config est refusée
+        if not ap_active():
+            raise NetworkError("le point d'accès n'a pas démarré "
+                               "(journalctl -u darksign-ap)")
+
+
 def ap_info():
     """Point d'accès actif : {"ssid", "password", "address"}, sinon None.
     Utilisé par l'écran d'accueil (QR code de connexion au Wi-Fi)."""
-    try:
-        name, addr = active_wifi()
-    except NetworkError:
-        return None
-    if name != AP_CONNECTION:
+    if not ap_active():
         return None
     cfg = load_config()
     return {"ssid": ap_ssid(cfg), "password": cfg["network"]["ap_password"],
-            "address": addr or AP_ADDRESS}
+            "address": AP_ADDRESS}
 
 
 def saved_networks():
@@ -123,7 +150,7 @@ def saved_networks():
     out = []
     for line in nmcli("-f", "NAME,TYPE", "connection", "show"):
         name, kind = fields(line)[:2]
-        if kind != "802-11-wireless" or name == AP_CONNECTION:
+        if kind != "802-11-wireless" or name == AP_PROFILE:
             continue
         values = nmcli("-g", "802-11-wireless.ssid,802-11-wireless.mode",
                        "connection", "show", name)
@@ -136,6 +163,9 @@ def saved_networks():
 
 def scan():
     """Réseaux visibles, du plus fort au plus faible, un par nom."""
+    if ap_active():
+        raise NetworkError("recherche impossible pendant le point d'accès : "
+                           "saisissez le nom du réseau")
     dev = wifi_device()
     if not dev:
         raise NetworkError("pas d'interface Wi-Fi")
@@ -172,38 +202,18 @@ def add_network(ssid, password):
 
 
 def forget_network(name):
-    if name == AP_CONNECTION:
+    if name == AP_PROFILE:
         raise NetworkError("le point d'accès ne peut pas être supprimé")
     nmcli("connection", "delete", name)
 
 
-def configure_ap(ssid, password, autoconnect):
-    """Crée ou met à jour le profil du point d'accès (WPA2, DHCP partagé).
-    Renvoie True si le profil a changé (nom, mot de passe ou démarrage auto)."""
-    settings = [
-        "802-11-wireless.ssid", ssid, "802-11-wireless.mode", "ap",
-        "802-11-wireless.band", "bg",
-        "ipv4.method", "shared", "ipv4.addresses", f"{AP_ADDRESS}/24",
-        "ipv6.method", "ignore",
-        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
-        "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp",
-        "wifi-sec.group", "ccmp", "wifi-sec.pmf", "disable",
-        # en mode point d'accès, NetworkManager le préfère dès le démarrage
-        "connection.autoconnect", "yes" if autoconnect else "no",
-        "connection.autoconnect-priority", "100",
-    ]
+def remove_old_profile():
+    """Profil NetworkManager du point d'accès des versions précédentes : il
+    reprendrait le Wi-Fi (priorité 100) si on le laissait."""
     names = [fields(l)[0] for l in nmcli("-f", "NAME", "connection", "show")]
-    if AP_CONNECTION in names:
-        current = nmcli("-s", "-g", "802-11-wireless.ssid,802-11-wireless-security.psk,"
-                        "connection.autoconnect", "connection", "show", AP_CONNECTION)
-        if current == [ssid, password, "yes" if autoconnect else "no"]:
-            return False   # inchangé : pas d'écriture, pas de coupure
-        nmcli("connection", "modify", AP_CONNECTION, *settings)
-    else:
-        dev = wifi_device()
-        nmcli("connection", "add", "type", "wifi", "ifname", dev or "*",
-              "con-name", AP_CONNECTION, *settings)
-    return True
+    if AP_PROFILE in names:
+        log.info("suppression de l'ancien point d'accès NetworkManager")
+        nmcli("connection", "delete", AP_PROFILE)
 
 
 class Supervisor:
@@ -219,27 +229,28 @@ class Supervisor:
         self.wake = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
 
-    def apply(self, cfg):
-        """Nouveau réglage (démarrage ou enregistrement depuis l'interface)."""
+    def apply(self, cfg, ap_changed=False):
+        """Nouveau réglage (démarrage ou enregistrement depuis l'interface).
+        ap_changed : nom ou mot de passe du point d'accès modifiés."""
         net = cfg["network"]
         with self.lock:
             self.mode = net["mode"]
             self.fallback = False
             self.lost_since = time.monotonic()
             try:
-                changed = configure_ap(ap_ssid(cfg), net["ap_password"],
-                                       autoconnect=self.mode == "ap")
-                name, _ = active_wifi()
-                if self.mode == "ap" and name != AP_CONNECTION:
+                remove_old_profile()
+                active = ap_active()
+                if self.mode == "ap" and not active:
                     log.info("mode point d'accès : activation")
-                    nmcli("connection", "up", AP_CONNECTION, timeout=60)
-                elif self.mode == "client" and name == AP_CONNECTION:
+                    ap_control("start")
+                elif self.mode == "ap" and ap_changed:
+                    log.info("point d'accès : relance avec le nouveau nom ou "
+                             "mot de passe")
+                    ap_control("restart")
+                elif self.mode == "client" and active:
                     log.info("mode client : arrêt du point d'accès")
-                    nmcli("connection", "down", AP_CONNECTION)
+                    ap_control("stop")
                     self._reconnect_client()
-                elif self.mode == "ap" and changed:
-                    # nom ou mot de passe modifiés : relance avec le profil à jour
-                    nmcli("connection", "up", AP_CONNECTION, timeout=60)
                 self.error = None
             except NetworkError as e:
                 self.error = str(e)
@@ -249,9 +260,8 @@ class Supervisor:
     def connect_now(self):
         """Rejoindre tout de suite un réseau mémorisé (mode client)."""
         with self.lock:
-            name, _ = active_wifi()
-            if name == AP_CONNECTION:
-                nmcli("connection", "down", AP_CONNECTION)
+            if ap_active():
+                ap_control("stop")
             self.fallback = False
             self.lost_since = time.monotonic()
             self._reconnect_client()
@@ -261,8 +271,9 @@ class Supervisor:
     def _reconnect_client():
         """Rejoint le premier réseau mémorisé à portée.
 
-        Pas de « nmcli device connect » : NetworkManager y choisit la
-        connexion de plus haute priorité… le point d'accès lui-même."""
+        NetworkManager le ferait seul, mais seulement après sa propre
+        recherche : on accélère en activant le premier réseau visible."""
+        time.sleep(3)   # le Wi-Fi vient d'être rendu à NetworkManager
         try:
             visible = {n["ssid"] for n in scan()}
             saved = saved_networks()
@@ -300,7 +311,7 @@ class Supervisor:
                         log.warning("aucun réseau depuis %d s : point d'accès "
                                     "activé (repli)", FALLBACK_DELAY)
                         try:
-                            nmcli("connection", "up", AP_CONNECTION, timeout=60)
+                            ap_control("start")
                             self.fallback = True
                             self.error = None
                         except NetworkError as e:
@@ -310,11 +321,11 @@ class Supervisor:
             self.status = self._read_status()
 
     def _read_status(self):
+        ap = ap_active()
         try:
-            name, addr = active_wifi()
+            name, addr = (None, AP_ADDRESS) if ap else active_wifi()
         except NetworkError as e:
             return {"mode": self.mode, "error": str(e)}
-        ap = name == AP_CONNECTION
         waiting = None
         if self.mode == "client" and not self.fallback and self.lost_since:
             waiting = max(0, int(FALLBACK_DELAY - (time.monotonic() - self.lost_since)))
