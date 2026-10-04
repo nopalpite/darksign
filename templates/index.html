@@ -145,6 +145,20 @@
   .savebar.show { transform: none; }
   .errors { color: var(--err); font-size: 13px; flex: 1; }
   .transport { display: flex; gap: 6px; }
+  .prep { background: var(--soft); border-radius: 8px; padding: 12px 14px;
+          margin-bottom: 16px; font-size: 13px; }
+  .prep p { margin: 0 0 8px; }
+  .prep details { margin-top: 4px; }
+  .prep .steps { margin: 8px 0 4px; padding-left: 20px; }
+  .prep .steps li { margin-bottom: 4px; }
+  .prep summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+  .prep a { color: var(--accent); }
+  .cmd { position: relative; margin: 8px 0; }
+  .cmd pre { margin: 0; padding: 10px 12px; padding-right: 84px; border-radius: 6px;
+             background: var(--card); border: 1px solid var(--border);
+             font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap;
+             word-break: break-all; }
+  .cmd .btn { position: absolute; top: 6px; right: 6px; }
   input.text { font: inherit; padding: 6px 8px; border-radius: 6px; width: 100%;
                border: 1px solid var(--border); background: var(--bg); color: var(--text); }
   code { font: 12px ui-monospace, monospace; background: var(--soft);
@@ -298,6 +312,37 @@
       <input type="file" id="file" multiple hidden
              accept="video/*,image/*,.mkv,.mov,.m4v,.ts,.srt,.vtt,.ass">
     </label>
+    <div class="prep" id="prep" hidden>
+      <p><b>Raspberry Pi 3 : convertissez vos vidéos sur votre ordinateur avant de
+        les envoyer.</b> Le lecteur sait le faire, mais sur ce modèle la conversion
+        est lente et sature le Pi, au point de perturber la lecture. Une vidéo déjà
+        au bon format est rangée telle quelle, instantanément.</p>
+      <details>
+        <summary>Avec HandBrake (gratuit, avec interface)</summary>
+        <ol class="steps">
+          <li>Installez <a href="https://handbrake.fr/" target="_blank"
+            rel="noopener">HandBrake</a> (Windows, macOS, Linux) et ouvrez votre vidéo.</li>
+          <li>Préréglage : <b>General › Fast 1080p30</b>. Il produit du H.264 en MP4
+            avec son AAC, 1080p et 30 images/s au plus : le format du lecteur.</li>
+          <li>Onglet <b>Résumé</b> : format <b>MP4</b>, cochez <b>Optimisé pour le Web</b>.</li>
+          <li><b>Démarrer l'encodage</b>, puis envoyez le fichier .mp4 obtenu.</li>
+        </ol>
+      </details>
+      <details>
+        <summary>Avec ffmpeg, en ligne de commande</summary>
+        <p class="hint">Installez <a href="https://ffmpeg.org/download.html"
+          target="_blank" rel="noopener">ffmpeg</a>, puis, dans un terminal, remplacez
+          <code>ma-video.mov</code> par votre fichier :</p>
+        <div class="cmd">
+          <pre id="prep-cmd"></pre>
+          <button class="btn" id="prep-copy">Copier</button>
+        </div>
+        <p class="hint">Résultat : MP4, H.264, 1080p au plus, son AAC stéréo,
+          résolution et cadence d'origine conservées. Au-delà de 30 images/s en 1080p,
+          ajoutez <code>-r 30</code> avant <code>sortie.mp4</code> : le Pi 3 ne décode
+          pas plus vite.</p>
+      </details>
+    </div>
     <div id="uploads"></div>
     <div id="jobs"></div>
     <table>
@@ -981,6 +1026,7 @@ async function load() {
   cfg = clone(saved);
   system = data.system || {};
   renderSystem();
+  $("prep").hidden = !system.slow_transcode;
   loadNetwork();
   render();
   renderMedia();
@@ -1078,6 +1124,29 @@ function renderHealth(h) {
     `moyenne sur 1 min (${h.cpus} cœurs)`, h.load / h.cpus > 0.9 ? "warn" : "");
   if (h.uptime != null) tile("Allumé depuis", fmtUptime(h.uptime));
 }
+
+// commande de préparation des vidéos (Pi 3) : produit exactement ce que le
+// lecteur range sans conversion (voir transcode.plan)
+const PREP_CMD = 'ffmpeg -i ma-video.mov -vf "yadif=deint=interlaced,'
+  + "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease"
+  + ':force_divisible_by=2,format=yuv420p" -c:v libx264 -preset medium -crf 20'
+  + ' -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart sortie.mp4';
+
+$("prep-cmd").textContent = PREP_CMD;
+$("prep-copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(PREP_CMD);   // https ou localhost seulement
+  } catch {
+    // adresse http du lecteur : copie par sélection
+    const area = document.createElement("textarea");
+    area.value = PREP_CMD;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  toast("Commande copiée");
+};
 
 function renderSystem() {
   $("reboot").disabled = $("poweroff").disabled = !system.power;

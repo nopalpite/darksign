@@ -14,7 +14,8 @@ from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
 from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR, ap_ssid,
-                    hostname_for, player_name, sudo_allowed,
+                    hostname_for, pi_model, player_name, slow_transcode,
+                    sudo_allowed,
                     SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, available_gpios,
                     fps_of, load_config, media_kind, player_request,
                     save_config, trigger_label, udp_key)
@@ -304,6 +305,7 @@ def api_state():
         player=player_status(),
         jobs=converter.list(),
         system={"power": system_allowed("reboot"), "rename": rename_allowed(),
+                "model": pi_model(), "slow_transcode": slow_transcode(),
                 "name": player_name(load_config()), "hostname": socket.gethostname()},
     )
 

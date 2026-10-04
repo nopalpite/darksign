@@ -231,6 +231,22 @@ def mdns_available():
                           ).returncode == 0
 
 
+def pi_model():
+    """Modèle du Raspberry Pi (« Raspberry Pi 3 Model B Rev 1.2 »)."""
+    try:
+        with open("/proc/device-tree/model") as f:
+            return f.read().strip("\0\n ")
+    except OSError:
+        return ""
+
+
+def slow_transcode():
+    """Pi 3 et Zero 2 (même puce, 1 Go au plus) : convertir une vidéo sur le
+    Pi les sature ; mieux vaut l'envoyer déjà au bon format."""
+    model = pi_model()
+    return "Raspberry Pi 3" in model or "Zero 2" in model
+
+
 def sudo_allowed(command):
     """La commande exacte figure-t-elle dans une règle sudo sans mot de passe
     (celles d'install.sh) ? « sudo -l COMMANDE » ne suffit pas : il répond oui

@@ -223,6 +223,19 @@ quelle, sans réencodage.
   `media/.incoming/` tant que la conversion n'est pas terminée : après un
   redémarrage, elle reprend automatiquement.
 
+Sur un **Raspberry Pi 3** (ou Zero 2), la conversion sature le Pi (processeur,
+1 Go de mémoire partagé avec la lecture) : l'interface recommande alors de
+convertir sur l'ordinateur avant l'envoi, avec cette commande, dont le
+résultat est rangé tel quel :
+
+    ffmpeg -i ma-video.mov -vf "yadif=deint=interlaced,scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p" -c:v libx264 -preset medium -crf 20 -maxrate 16M -bufsize 32M -c:a aac -b:a 192k -ac 2 -movflags +faststart sortie.mp4
+
+Sans ffmpeg : [HandBrake](https://handbrake.fr/) (gratuit, avec interface),
+préréglage **General › Fast 1080p30**, format MP4 « Optimisé pour le Web »
+(H.264, AAC, 1080p et 30 images/s au plus).
+
+Sur un Pi 4, la conversion sur le lecteur se passe bien.
+
 ## Sous-titres
 
 Fichiers .srt (ainsi que .vtt et .ass) envoyés depuis la médiathèque, puis
