@@ -26,8 +26,9 @@ import qrcode
 from PIL import Image, ImageDraw
 
 import brand
+import network
 from brand import ACCENT, MUTED, TEXT, font
-from common import mdns_available, network_status
+from common import load_config, mdns_available, network_status, player_name
 
 W, H = 1920, 1080
 FPS = 25
@@ -60,7 +61,8 @@ OK = (74, 222, 128)
 def _footer(d, hostname, addresses):
     d.line((LEFT, H - 120, RIGHT, H - 120), fill=LINE, width=2)
     footer = font("Inter-Regular.otf", 24)
-    d.text((LEFT, H - 80), f"{hostname}  ·  {', '.join(addresses) or 'hors réseau'}",
+    name = player_name(load_config())   # nom du lecteur (« Hall A »)
+    d.text((LEFT, H - 80), f"{name}  ·  {', '.join(addresses) or 'hors réseau'}",
            font=footer, fill=MUTED, anchor="lm")
     d.text((RIGHT, H - 80), "Cet écran disparaît dès qu'un contenu est programmé",
            font=footer, fill=MUTED, anchor="rm")
@@ -125,8 +127,97 @@ def offline_layer(status):
     return img
 
 
+def _steps(d, y, steps):
+    step_font = font("Inter-Regular.otf", 30)
+    num_font = font("Inter-SemiBold.otf", 25)
+    for i, step in enumerate(steps, 1):
+        cy = y + 22
+        d.ellipse((LEFT, cy - 21, LEFT + 42, cy + 21), outline=ACCENT, width=3)
+        d.text((LEFT + 21, cy), str(i), font=num_font, fill=ACCENT, anchor="mm")
+        d.text((LEFT + 68, cy), step, font=step_font, fill=TEXT, anchor="lm")
+        y += 60
+    return y
+
+
+def _qr(img, d, data, max_size, x, y, label):
+    """QR code sur carte blanche, coin haut gauche du code en (x, y)."""
+    qr = qrcode.QRCode(border=0, box_size=1,
+                       error_correction=qrcode.constants.ERROR_CORRECT_M)
+    qr.add_data(data)
+    qr.make(fit=True)
+    modules = qr.modules_count
+    size = modules * (max_size // modules)   # modules de taille entière : net
+    code = qr.make_image(fill_color=(11, 12, 15), back_color="white")
+    code = code.convert("RGB").resize((size, size), Image.NEAREST)
+    pad = 34 if max_size > 300 else 24
+    d.rounded_rectangle((x - pad, y - pad, x + size + pad, y + size + pad),
+                        radius=24, fill=(255, 255, 255, 255))
+    img.paste(code, (x, y))
+    d.text((x + size / 2, y + size + pad + 36), label,
+           font=font("Inter-Medium.otf", 28), fill=MUTED, anchor="mm")
+    return size
+
+
+def _wifi_qr_data(ssid, password):
+    """Format reconnu par les appareils photo des téléphones pour rejoindre
+    un Wi-Fi (caractères spéciaux échappés)."""
+    esc = lambda v: "".join("\\" + c if c in '\\;,:"' else c for c in v)
+    return f"WIFI:T:WPA;S:{esc(ssid)};P:{esc(password)};;"
+
+
+def ap_layer(ap, addresses, port):
+    """Point d'accès du lecteur : rejoindre son Wi-Fi, puis l'interface."""
+    hostname = socket.gethostname()
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    col_w = 1000
+    y = 250
+    d.text((LEFT, y), "Prêt à être configuré",
+           font=font("InterDisplay-SemiBold.otf", 72), fill=TEXT)
+    y += 112
+    body = font("Inter-Regular.otf", 30)
+    for line in _wrap(d, "Le lecteur diffuse son propre réseau Wi-Fi : connectez-y un "
+                      "ordinateur ou un téléphone, puis ouvrez l'interface :",
+                      body, col_w):
+        d.text((LEFT, y), line, font=body, fill=MUTED)
+        y += 44
+    y += 24
+
+    d.rounded_rectangle((LEFT, y, LEFT + col_w, y + 132), radius=18, fill=CARD,
+                        outline=LINE, width=2)
+    label = font("Inter-SemiBold.otf", 30)
+    value = font("InterDisplay-SemiBold.otf", 38)
+    for i, (name, text) in enumerate((("Wi-Fi", ap["ssid"]),
+                                      ("Mot de passe", ap["password"]))):
+        ry = y + 38 + i * 56
+        d.text((LEFT + 44, ry), name, font=label, fill=MUTED, anchor="lm")
+        d.text((LEFT + 300, ry), text, font=value, fill=TEXT, anchor="lm")
+    y += 156
+
+    url = f"http://{ap['address']}:{port}"
+    d.rounded_rectangle((LEFT, y, LEFT + col_w, y + 124), radius=18,
+                        fill=CARD, outline=LINE, width=2)
+    d.text((LEFT + 44, y + 62), url, anchor="lm",
+           font=font("InterDisplay-SemiBold.otf", 56), fill=ACCENT)
+    y += 164
+    _steps(d, y, ["Envoyez vos vidéos et images, choisissez le mode",
+                  "Enregistrez : la lecture démarre sur cet écran"])
+
+    size = 220
+    x = RIGHT - 24 - size
+    _qr(img, d, _wifi_qr_data(ap["ssid"], ap["password"]), size, x, 274,
+        "1 · Rejoindre le Wi-Fi")
+    _qr(img, d, url, size, x, 274 + size + 118, "2 · Ouvrir l'interface")
+
+    _footer(d, hostname, addresses + ["point d'accès Wi-Fi"])
+    return img
+
+
 def info_layer(addresses, port):
     """Tout l'écran sauf le logo, sur fond transparent (RGBA)."""
+    ap = network.ap_info()
+    if ap:
+        return ap_layer(ap, addresses, port)
     if not addresses:
         return offline_layer(network_status())
     hostname = socket.gethostname()
@@ -164,36 +255,15 @@ def info_layer(addresses, port):
                    font=font("Inter-Regular.otf", 28), fill=MUTED)
         y += 74
 
-    steps = ["Envoyez vos vidéos et images dans la médiathèque",
-             "Choisissez le mode : playlist ou interactif (boutons)",
-             "Enregistrez : la lecture démarre sur cet écran"]
-    step_font = font("Inter-Regular.otf", 30)
-    num_font = font("Inter-SemiBold.otf", 25)
-    for i, step in enumerate(steps, 1):
-        cy = y + 22
-        d.ellipse((LEFT, cy - 21, LEFT + 42, cy + 21), outline=ACCENT, width=3)
-        d.text((LEFT + 21, cy), str(i), font=num_font, fill=ACCENT, anchor="mm")
-        d.text((LEFT + 68, cy), step, font=step_font, fill=TEXT, anchor="lm")
-        y += 60
-    bottom = y
+    bottom = _steps(d, y, ["Envoyez vos vidéos et images dans la médiathèque",
+                           "Choisissez le mode : playlist ou interactif (boutons)",
+                           "Enregistrez : la lecture démarre sur cet écran"])
 
     if url:
-        qr = qrcode.QRCode(border=0, box_size=1,
-                           error_correction=qrcode.constants.ERROR_CORRECT_M)
-        qr.add_data(url)
-        qr.make(fit=True)
-        modules = qr.modules_count
-        size = modules * (340 // modules)   # modules de taille entière : net
-        code = qr.make_image(fill_color=(11, 12, 15), back_color="white")
-        code = code.convert("RGB").resize((size, size), Image.NEAREST)
-        pad = 34
-        cx = RIGHT - pad - size
-        cy = int(top + (bottom - top - size - 70) / 2)
-        d.rounded_rectangle((cx - pad, cy - pad, cx + size + pad, cy + size + pad),
-                            radius=24, fill=(255, 255, 255, 255))
-        img.paste(code, (cx, cy))
-        d.text((cx + size / 2, cy + size + pad + 42), "Scanner pour administrer",
-               font=font("Inter-Medium.otf", 28), fill=MUTED, anchor="mm")
+        size = 340
+        x = RIGHT - 34 - size
+        _qr(img, d, url, size, x, int(top + (bottom - top - size - 70) / 2),
+            "Scanner pour administrer")
 
     _footer(d, hostname, addresses)
     return img

@@ -7,6 +7,7 @@ des boutons sur les GPIO, administrée depuis une interface web.
 - `web.py` : interface d'administration sur le port 8080, service `videoplayer-web`
 - `common.py` : configuration, médias, GPIO disponibles, dialogue avec le lecteur
 - `transcode.py` : file de conversion des vidéos importées
+- `network.py` : Wi-Fi du lieu ou point d'accès autonome (NetworkManager)
 - `splash.py` : écran d'accueil (image fixe et animation d'intro)
 - `brand.py` : identité DarkSign (logo éclipse, mot-symbole, rendu du halo)
 - `assets/intro.mp4` : intro animée générique (éclipse), générée par `splash.py intro`
@@ -68,6 +69,40 @@ Pour tester sans bouton câblé : [gpio-web](https://github.com/nopalpite/gpio-w
   Option : un appui peut ou non interrompre la vidéo en cours.
   Chaque vidéo se lance par un bouton GPIO, un message UDP, ou les deux.
 
+## Nom du lecteur
+
+Chaque lecteur a un nom (« Hall A », « Stand 12 »…), demandé à l'installation
+(ou `--name`) et modifiable dans l'interface. Il est affiché dans l'interface
+et sur l'écran d'accueil, et repris :
+
+- dans son adresse : `http://hall-a.local:8080` (nom d'hôte du Pi, changé par
+  `/usr/local/sbin/darksign-hostname`, que l'interface appelle via sudo) ;
+- dans le nom du Wi-Fi de son point d'accès, sauf si un autre nom est choisi.
+
+Pratique pour réutiliser les mêmes lecteurs d'un événement à l'autre, ou pour
+en distinguer plusieurs sur un même réseau.
+
+## Réseau
+
+Deux fonctionnements, choisis à l'installation (question posée par
+install.sh, ou `--network client|ap`, avec `--ap-ssid` et `--ap-password`)
+et modifiables ensuite dans l'interface (section Réseau) :
+
+- **Wi-Fi du lieu** : le lecteur rejoint le premier réseau Wi-Fi mémorisé à
+  portée. Les réseaux s'ajoutent depuis l'interface (recherche des réseaux
+  visibles, mot de passe). Si aucun réseau n'est joignable pendant 90 s (au
+  démarrage ou plus tard), le lecteur active son point d'accès en secours,
+  jusqu'au prochain redémarrage ou changement de mode : on ne le perd jamais.
+- **Point d'accès autonome** (événementiel) : le lecteur crée son propre
+  réseau Wi-Fi WPA2, sans box ni routeur. Il est joignable en
+  `http://10.42.0.1:8080` ; nom (celui du lecteur par défaut) et mot de passe
+  (généré à l'installation, modifiable) sont affichés sur l'écran d'accueil, avec un QR code pour
+  rejoindre le réseau et un autre pour ouvrir l'interface.
+
+Le câble Ethernet fonctionne dans les deux modes. La gestion du réseau passe
+par NetworkManager ; install.sh autorise l'utilisateur du lecteur à le piloter
+(règle polkit `/etc/polkit-1/rules.d/50-darksign.rules`).
+
 ## Commandes UDP
 
 Le lecteur écoute des messages texte en UDP (port 5000 par défaut, modifiable
@@ -78,7 +113,7 @@ ni des espaces ou retours à la ligne autour :
 - dans tous les modes : `pause`, `play` (reprise) et `restart` (relance
   depuis le début).
 
-    echo film | nc -u -w1 rpi-microbiote.local 5000
+    echo film | nc -u -w1 hall-a.local 5000
 
 Un même message répété dans les 300 ms (émetteurs qui doublent l'envoi) ne
 compte qu'une fois. Le dernier message reçu, son expéditeur et son effet

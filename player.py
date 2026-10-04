@@ -34,13 +34,14 @@ import sys
 
 import gpiod
 import mpv
+
+import network
 from gpiod.line import Bias, Direction, Edge
 
 from common import (BASE, DATA_DIR, IMAGE_DURATION, MEDIA_DIR, SOCKET_PATH,
-                    SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, trigger_label,
-                    udp_key,
-                    load_config, mdns_available, media_kind, network_addresses,
-                    network_status)
+                    SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, load_config,
+                    mdns_available, media_kind, network_addresses,
+                    network_status, player_name, trigger_label, udp_key)
 
 log = logging.getLogger("player")
 
@@ -557,8 +558,10 @@ class Player:
         # sans réseau, l'écran affiche un diagnostic (Wi-Fi, câble) : il fait
         # partie de la clé pour être redessiné quand l'état change
         diag = None if addresses else network_status()
-        data = json.dumps([socket.gethostname(), WEB_PORT, addresses,
-                           mdns_available(), stamp, diag])
+        # point d'accès : son nom et son mot de passe sont affichés
+        data = json.dumps([socket.gethostname(), player_name(self.cfg or load_config()),
+                           WEB_PORT, addresses, mdns_available(), stamp, diag,
+                           network.ap_info()])
         return hashlib.sha1(data.encode()).hexdigest()[:12]
 
     def _show_splash(self, context="enter"):
@@ -684,8 +687,9 @@ class Player:
         if addresses != self.splash_addresses:
             log.info("adresse réseau modifiée : écran d'accueil mis à jour")
             self._show_splash("change")
-        elif not addresses and self._splash_key(addresses) != self.splash_key:
-            log.info("état du réseau modifié : diagnostic mis à jour")
+        elif self._splash_key(addresses) != self.splash_key:
+            # diagnostic hors réseau, point d'accès activé ou modifié…
+            log.info("état du réseau modifié : écran d'accueil mis à jour")
             self._show_splash("change")
 
     def _show_attract(self):

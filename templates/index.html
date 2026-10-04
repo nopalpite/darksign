@@ -48,6 +48,8 @@
        font-size: 21px; font-weight: 300; letter-spacing: -0.01em; }
   h1 b { font-weight: 650; }
   h1 svg { width: 30px; height: 30px; flex: none; }
+  h1 .pname { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 6px;
+              padding-left: 12px; border-left: 1px solid var(--border); }
   h2 { font-size: 15px; font-weight: 600; margin: 0 0 14px; }
   h3 { font-size: 13px; font-weight: 600; margin: 20px 0 10px; color: var(--muted);
        text-transform: uppercase; letter-spacing: .04em; }
@@ -147,6 +149,14 @@
                border: 1px solid var(--border); background: var(--bg); color: var(--text); }
   code { font: 12px ui-monospace, monospace; background: var(--soft);
          padding: 1px 5px; border-radius: 4px; }
+  .netstate { margin: 0 0 14px; }
+  .netstate b { font-weight: 600; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; min-width: 0; }
+  .wifi-add { margin-top: 14px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+           background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok);
+           margin-left: 8px; }
   .health { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
             gap: 10px; margin-bottom: 16px; }
   .tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
@@ -176,7 +186,7 @@
 </head>
 <body>
 <header>
-  <h1><svg viewBox="0 0 32 32" aria-hidden="true"><defs><radialGradient id="corona"><stop offset="0.58" stop-color="#ffb054" stop-opacity="0"/><stop offset="0.63" stop-color="#fff3e0"/><stop offset="0.74" stop-color="#ffa23e" stop-opacity=".75"/><stop offset="1" stop-color="#ff9030" stop-opacity="0"/></radialGradient></defs><circle cx="16" cy="16" r="16" fill="url(#corona)"/><circle cx="16" cy="16" r="9.8" fill="#0b0c0f"/></svg><span>dark<b>sign</b></span></h1>
+  <h1><svg viewBox="0 0 32 32" aria-hidden="true"><defs><radialGradient id="corona"><stop offset="0.58" stop-color="#ffb054" stop-opacity="0"/><stop offset="0.63" stop-color="#fff3e0"/><stop offset="0.74" stop-color="#ffa23e" stop-opacity=".75"/><stop offset="1" stop-color="#ff9030" stop-opacity="0"/></radialGradient></defs><circle cx="16" cy="16" r="16" fill="url(#corona)"/><circle cx="16" cy="16" r="9.8" fill="#0b0c0f"/></svg><span>dark<b>sign</b></span><span class="pname" id="pname"></span></h1>
   <div class="now">
     <span class="dot" id="dot"></span>
     <span id="now">…</span>
@@ -296,6 +306,65 @@
   </section>
 
   <section>
+    <h2>Nom et réseau</h2>
+    <div class="field">
+      <label for="name">Nom du lecteur</label>
+      <input class="text" id="name" maxlength="40" autocomplete="off"
+             placeholder="ex. Hall A, Stand 12, Salle Ève">
+    </div>
+    <p class="hint" id="name-hint" style="margin:-4px 0 18px"></p>
+    <div class="alert" id="net-error" hidden></div>
+    <p class="netstate" id="net-status">…</p>
+    <div class="seg" id="net-mode">
+      <button data-net="client">Wi-Fi du lieu</button>
+      <button data-net="ap">Point d'accès autonome</button>
+    </div>
+    <p class="hint" id="net-mode-hint" style="margin-top:-8px"></p>
+
+    <h3>Point d'accès du lecteur</h3>
+    <div class="field">
+      <label for="ap-ssid">Nom du réseau</label>
+      <input class="text" id="ap-ssid" maxlength="32" autocomplete="off"
+             title="Vide : le nom du lecteur">
+    </div>
+    <div class="field">
+      <label for="ap-password">Mot de passe</label>
+      <input class="text" id="ap-password" maxlength="63" autocomplete="off" spellcheck="false">
+    </div>
+    <p class="hint">Diffusé en mode autonome, et en secours en mode Wi-Fi du lieu :
+      si aucun réseau n'est joignable pendant 90 s, le lecteur active ce point
+      d'accès (jusqu'au prochain redémarrage). Adresse du lecteur sur ce réseau :
+      <code>http://10.42.0.1:8080</code>. Nom et mot de passe sont aussi affichés
+      sur l'écran d'accueil.</p>
+
+    <h3>Réseaux Wi-Fi mémorisés</h3>
+    <table><tbody id="wifi-saved"></tbody></table>
+    <div class="wifi-add">
+      <div class="field">
+        <label for="wifi-ssid">Ajouter un réseau</label>
+        <div class="row">
+          <input class="text" id="wifi-ssid" placeholder="Nom du réseau (SSID)" list="wifi-scan"
+                 maxlength="32" autocomplete="off">
+          <datalist id="wifi-scan"></datalist>
+          <button class="btn" id="wifi-search" title="Lister les réseaux visibles">Rechercher</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="wifi-password">Mot de passe</label>
+        <div class="row">
+          <input class="text" id="wifi-password" type="password" maxlength="63"
+                 placeholder="vide pour un réseau ouvert" autocomplete="new-password">
+          <button class="btn" id="wifi-add">Mémoriser</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Le lecteur rejoint automatiquement le premier réseau mémorisé à
+      portée (mode Wi-Fi du lieu). Le câble Ethernet fonctionne dans les deux modes.</p>
+    <p style="margin:12px 0 0"><button class="btn" id="wifi-connect" hidden>Se connecter
+      maintenant à un réseau mémorisé</button></p>
+  </section>
+
+  <section>
     <h2>Système</h2>
     <div class="health" id="health"></div>
     <div class="system">
@@ -318,6 +387,7 @@ const $ = (id) => document.getElementById(id);
 let saved = null;   // configuration enregistrée
 let cfg = null;     // configuration en cours d'édition
 let media = [], gpios = [], player = null, jobs = [], system = {};
+let net = { status: {}, saved: [], allowed: true };   // état du réseau
 
 const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(1) + " Go"
   : b > 1e6 ? (b / 1e6).toFixed(0) + " Mo" : Math.ceil(b / 1e3) + " ko";
@@ -366,6 +436,7 @@ function render() {
   $("wiring").value = it.active_low ? "low" : "high";
   renderTriggers();
   renderUdp();
+  renderNetwork();
 
   $("volume").value = cfg.volume;
   $("volume-val").textContent = `(${cfg.volume} %)`;
@@ -698,6 +769,18 @@ $("udp-port").onchange = (e) => { cfg.udp_port = +e.target.value; render(); };
 $("cancel").onclick = () => { cfg = clone(saved); $("errors").textContent = ""; render(); };
 
 $("save").onclick = async () => {
+  if (cfg.network.mode !== saved.network.mode && !confirm(cfg.network.mode === "ap"
+    ? "Passer en point d'accès autonome ? Le lecteur quitte le Wi-Fi du lieu : "
+      + `rejoignez ensuite le réseau « ${apSsidOf(cfg)} » puis ouvrez http://10.42.0.1:8080.`
+    : "Passer en Wi-Fi du lieu ? Le lecteur arrête son point d'accès et rejoint un réseau "
+      + "mémorisé : vous serez déconnecté. Si aucun n'est joignable, le point d'accès "
+      + "revient sous 2 minutes.")) return;
+  const apActive = ["ap", "fallback"].includes(net.status?.state);
+  if (apActive && cfg.network.mode === saved.network.mode
+      && (apSsidOf(cfg) !== apSsidOf(saved)
+          || cfg.network.ap_password !== saved.network.ap_password)
+      && !confirm("Le point d'accès redémarre avec le nouveau nom ou mot de passe : "
+        + "les appareils connectés sont coupés et devront le rejoindre à nouveau.")) return;
   const r = await fetch("/api/config", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cfg),
@@ -706,7 +789,14 @@ $("save").onclick = async () => {
   if (!r.ok) { $("errors").textContent = data.errors.join(" · "); return; }
   $("errors").textContent = "";
   await load();
-  toast("Configuration appliquée");
+  toast(data.hostname ? `Lecteur renommé : http://${data.hostname}.local:8080`
+    : "Configuration appliquée");
+  if (data.hostname && location.hostname.endsWith(".local")) {
+    // l'ancienne adresse .local disparaît : on suit le nouveau nom
+    setTimeout(() => {
+      location.href = `${location.protocol}//${data.hostname}.local:${location.port}/`;
+    }, 5000);
+  }
 };
 
 // --- médiathèque ---------------------------------------------------------------
@@ -891,6 +981,7 @@ async function load() {
   cfg = clone(saved);
   system = data.system || {};
   renderSystem();
+  loadNetwork();
   render();
   renderMedia();
   renderJobs();
@@ -906,6 +997,7 @@ async function poll() {
     player = data.player;
     jobs = data.jobs;
     renderHealth(data.health);
+    if (data.network) { net.status = data.network; renderNetStatus(); }
     if (offline && player && !dirty()) load();   // retour après un redémarrage
     renderStatus();
     renderJobs();
@@ -1007,6 +1099,171 @@ $("reboot").onclick = () => power("reboot",
 $("poweroff").onclick = () => power("poweroff",
   "Éteindre le Pi ? Il faudra couper puis remettre l'alimentation pour le rallumer.",
   "Extinction… vous pourrez couper l'alimentation dans quelques secondes");
+
+// --- réseau ---------------------------------------------------------------------
+
+async function loadNetwork() {
+  try {
+    net = await (await fetch("/api/network")).json();
+  } catch { return; }
+  renderNetwork();
+}
+
+// nom d'hôte tiré du nom du lecteur (comme common.hostname_for)
+const hostnameFor = (name) => name.normalize("NFKD").replace(/[^\x00-\x7f]/g, "")
+  .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+  .slice(0, 63).replace(/-+$/, "") || "darksign";
+const nameOf = (c) => c?.name || system.hostname || "";
+const apSsidOf = (c) => c?.network?.ap_ssid || nameOf(c);
+
+function ssidOf(connection) {
+  return net.saved.find((n) => n.name === connection)?.ssid || connection;
+}
+
+function renderNetStatus() {
+  const st = net.status || {};
+  const box = $("net-status");
+  const ap = apSsidOf(saved);
+  const others = (st.addresses || []).filter((a) => a !== st.address);
+  const extra = others.length ? ` · aussi ${others.join(", ")}` : "";
+  const html = (s) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  if (st.state === "client") {
+    box.innerHTML = `Connecté au Wi-Fi <b>« ${html(ssidOf(st.connection))} »</b>`
+      + ` · ${html(st.address || "…")}${html(extra)}`;
+  } else if (st.state === "ap") {
+    box.innerHTML = `Point d'accès <b>« ${html(ap || "")} »</b> actif · ${html(st.address || "")}`
+      + html(extra);
+  } else if (st.state === "fallback") {
+    box.innerHTML = `Aucun réseau joignable : point d'accès de secours <b>« ${html(ap || "")} »</b>`
+      + ` actif · ${html(st.address || "")}${html(extra)}`;
+  } else if (st.state === "disconnected") {
+    box.innerHTML = `Wi-Fi non connecté${html(extra.replace(" · aussi", " · câble :"))}`
+      + (st.fallback_in != null ? ` · point d'accès de secours dans ${st.fallback_in} s` : "");
+  } else {
+    box.textContent = "État du réseau inconnu";
+  }
+  const err = st.error || (!net.allowed ? "Gestion du réseau indisponible : relancez "
+    + "l'installateur (sudo ./install.sh) pour l'autoriser." : "");
+  $("net-error").hidden = !err;
+  $("net-error").textContent = err;
+  $("wifi-connect").hidden = !(saved?.network?.mode === "client"
+    && ["fallback", "disconnected"].includes(st.state) && net.saved.length);
+}
+
+function renderNetwork() {
+  if (!cfg) return;
+  const n = cfg.network;
+  for (const b of $("net-mode").children) b.classList.toggle("on", b.dataset.net === n.mode);
+  $("net-mode-hint").textContent = n.mode === "ap"
+    ? "Le lecteur crée son propre réseau Wi-Fi, sans box ni routeur : idéal en événementiel."
+    : "Le lecteur rejoint un des réseaux Wi-Fi mémorisés ci-dessous.";
+  if (document.activeElement !== $("ap-ssid")) $("ap-ssid").value = n.ap_ssid || "";
+  $("ap-ssid").placeholder = nameOf(cfg);
+  if (document.activeElement !== $("name")) $("name").value = cfg.name || "";
+  $("name").placeholder = system.hostname || "";
+  $("name").disabled = !system.rename;
+  const host = cfg.name ? hostnameFor(cfg.name) : system.hostname;
+  $("name-hint").textContent = !system.rename
+    ? "Changement de nom indisponible : relancez l'installateur (sudo ./install.sh)."
+    : `Adresse : http://${host}.local:8080 · Wi-Fi du point d'accès : « ${apSsidOf(cfg)} »`
+      + (cfg.name && host !== system.hostname ? " (appliqué à l'enregistrement)" : "");
+  $("pname").textContent = nameOf(saved);
+  document.title = nameOf(saved) ? `${nameOf(saved)} — DarkSign` : "DarkSign";
+  if (document.activeElement !== $("ap-password")) $("ap-password").value = n.ap_password || "";
+
+  const body = $("wifi-saved");
+  body.innerHTML = "";
+  for (const w of net.saved) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = w.ssid;
+    if (net.status?.state === "client" && net.status.connection === w.name) {
+      const b = document.createElement("span");
+      b.className = "badge";
+      b.textContent = "connecté";
+      name.append(b);
+    }
+    const act = document.createElement("td");
+    act.className = "actions";
+    const del = document.createElement("button");
+    del.className = "btn danger";
+    del.textContent = "Oublier";
+    del.disabled = !net.allowed;
+    del.onclick = async () => {
+      if (!confirm(`Oublier le réseau « ${w.ssid} » ?`)) return;
+      const r = await fetch(`/api/network/wifi/${encodeURIComponent(w.name)}`,
+                            { method: "DELETE" });
+      if (!r.ok) toast((await r.json()).error);
+      loadNetwork();
+    };
+    act.append(del);
+    tr.append(name, act);
+    body.append(tr);
+  }
+  if (!net.saved.length) {
+    body.innerHTML = `<tr><td class="empty">Aucun réseau Wi-Fi mémorisé.</td></tr>`;
+  }
+  for (const id of ["wifi-search", "wifi-add", "ap-ssid", "ap-password"]) {
+    $(id).disabled = !net.allowed;
+  }
+  for (const b of $("net-mode").children) b.disabled = !net.allowed;
+  renderNetStatus();
+}
+
+$("net-mode").onclick = (e) => {
+  if (e.target.dataset.net) { cfg.network.mode = e.target.dataset.net; render(); }
+};
+$("ap-ssid").onchange = (e) => { cfg.network.ap_ssid = e.target.value.trim() || null; render(); };
+$("name").onchange = (e) => { cfg.name = e.target.value.trim() || null; render(); };
+$("ap-password").onchange = (e) => { cfg.network.ap_password = e.target.value; render(); };
+
+$("wifi-search").onclick = async () => {
+  const btn = $("wifi-search");
+  btn.disabled = true;
+  btn.textContent = "Recherche…";
+  try {
+    const data = await (await fetch("/api/network/scan")).json();
+    if (data.error) { toast(data.error); return; }
+    const list = $("wifi-scan");
+    list.innerHTML = "";
+    for (const w of data.result) {
+      const o = document.createElement("option");
+      o.value = w.ssid;
+      o.label = `${w.signal} %${w.secure ? " · protégé" : " · ouvert"}`;
+      list.append(o);
+    }
+    toast(data.result.length ? `${data.result.length} réseau(x) trouvé(s) : choisissez dans la liste`
+      : "Aucun réseau visible");
+    $("wifi-ssid").focus();
+  } catch {
+    toast("Recherche impossible");
+  } finally {
+    btn.disabled = !net.allowed;
+    btn.textContent = "Rechercher";
+  }
+};
+
+$("wifi-add").onclick = async () => {
+  const ssid = $("wifi-ssid").value.trim();
+  if (!ssid) { toast("Indiquez le nom du réseau"); return; }
+  const r = await fetch("/api/network/wifi", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ssid, password: $("wifi-password").value }),
+  });
+  const data = await r.json();
+  if (!r.ok) { toast(data.error); return; }
+  $("wifi-ssid").value = $("wifi-password").value = "";
+  toast(`Réseau « ${ssid} » mémorisé`);
+  loadNetwork();
+};
+
+$("wifi-connect").onclick = async () => {
+  if (!confirm("Le lecteur va quitter son point d'accès pour rejoindre un réseau mémorisé : "
+    + "vous serez déconnecté. Si aucun réseau n'est joignable, le point d'accès revient "
+    + "sous 2 minutes.")) return;
+  await fetch("/api/network/connect", { method: "POST" });
+  toast("Connexion en cours…");
+};
 
 // --- thème ----------------------------------------------------------------------
 

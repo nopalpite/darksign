@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """Backend web d'administration du lecteur vidéo."""
 import json
+import logging
 import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 
 from flask import Flask, jsonify, render_template, request
 from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
-from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR,
+from common import (IMAGE_DURATION, IMAGE_DURATION_MAX, MEDIA_DIR, ap_ssid,
+                    hostname_for, player_name,
                     SUBTITLE_SIZES, UDP_COMMANDS, UDP_MAX_LEN, available_gpios,
                     fps_of, load_config, media_kind, player_request,
                     save_config, trigger_label, udp_key)
 from transcode import INCOMING_DIR, Converter
+import network
 
 app = Flask(__name__)
 PORT = 8080
 SYSTEMCTL = "/usr/bin/systemctl"
 SYSTEM_ACTIONS = ("reboot", "poweroff")   # autorisées par /etc/sudoers.d/darksign
+HOSTNAME_HELPER = "/usr/local/sbin/darksign-hostname"   # idem (install.sh)
+NAME_MAX = 40
 
 _probe_cache = {}  # nom -> (mtime, infos)
 
@@ -221,6 +227,22 @@ def validate(cfg):
         if media.get(t.get("media")) != "video":
             errors.append(f"{label} : choisissez une vidéo")
 
+    net = cfg["network"]
+    if net.get("mode") not in ("client", "ap"):
+        errors.append("réseau : mode inconnu")
+    # nom du point d'accès vide : celui du lecteur
+    net["ap_ssid"] = str(net.get("ap_ssid") or "").strip() or None
+    net["ap_password"] = str(net.get("ap_password") or "")
+    if net["ap_ssid"] and len(net["ap_ssid"].encode()) > 32:
+        errors.append("point d'accès : nom de 32 caractères au maximum")
+    cfg["name"] = str(cfg.get("name") or "").strip() or None
+    if cfg["name"] and len(cfg["name"]) > NAME_MAX:
+        errors.append(f"nom du lecteur : {NAME_MAX} caractères au maximum")
+    if not (8 <= len(net["ap_password"]) <= 63 and net["ap_password"].isascii()
+            and net["ap_password"].isprintable()):
+        errors.append("point d'accès : mot de passe de 8 à 63 caractères "
+                      "(sans accents)")
+
     try:
         port = int(cfg.get("udp_port"))
         if not 1024 <= port <= 65535:
@@ -252,24 +274,74 @@ def api_state():
         gpios=available_gpios(),
         player=player_status(),
         jobs=converter.list(),
-        system={"power": system_allowed("reboot")},
+        system={"power": system_allowed("reboot"), "rename": rename_allowed(),
+                "name": player_name(load_config()), "hostname": socket.gethostname()},
     )
 
 
 @app.get("/api/status")
 def api_status():
     return jsonify(player=player_status(), jobs=converter.list(),
-                   health=system_health())
+                   health=system_health(), network=supervisor.status)
+
+
+# --- réseau --------------------------------------------------------------------
+
+def network_call(fn, *args):
+    try:
+        return jsonify(ok=True, result=fn(*args))
+    except network.NetworkError as e:
+        return jsonify(error=str(e)), 400
+
+
+@app.get("/api/network")
+def api_network():
+    try:
+        saved = network.saved_networks()
+    except network.NetworkError as e:
+        saved, supervisor.status["error"] = [], str(e)
+    return jsonify(status=supervisor.status, saved=saved, allowed=network.allowed())
+
+
+@app.get("/api/network/scan")
+def api_network_scan():
+    return network_call(network.scan)
+
+
+@app.post("/api/network/wifi")
+def api_network_add():
+    body = request.get_json(force=True)
+    ssid = str(body.get("ssid") or "").strip()
+    password = str(body.get("password") or "")
+    if not 1 <= len(ssid.encode()) <= 32:
+        return jsonify(error="nom de réseau de 1 à 32 caractères"), 400
+    if password and not 8 <= len(password) <= 63:
+        return jsonify(error="mot de passe Wi-Fi de 8 à 63 caractères"), 400
+    return network_call(network.add_network, ssid, password)
+
+
+@app.delete("/api/network/wifi/<path:name>")
+def api_network_forget(name):
+    return network_call(network.forget_network, name)
+
+
+@app.post("/api/network/connect")
+def api_network_connect():
+    # en tâche de fond : quitter le point d'accès coupe cette requête
+    threading.Thread(target=supervisor.connect_now, daemon=True).start()
+    return jsonify(ok=True)
 
 
 @app.post("/api/config")
 def api_config():
     cfg = load_config()
     body = request.get_json(force=True)
-    for key in ("mode", "volume", "audio_device", "udp_port"):
+    for key in ("mode", "volume", "audio_device", "udp_port", "name"):
         if key in body:
             cfg[key] = body[key]
-    for key in ("loop", "interactive", "subtitle_style"):
+    old_network = network_settings(load_config())
+    old_name = load_config()["name"]
+    for key in ("loop", "interactive", "subtitle_style", "network"):
         if isinstance(body.get(key), dict):
             cfg[key].update(body[key])
     if isinstance(body.get("subtitles"), dict):
@@ -290,11 +362,52 @@ def api_config():
     except (TypeError, ValueError):
         return jsonify(errors=["déclencheur : GPIO invalide"]), 400
     errors = validate(cfg)
+    network_changed = network_settings(cfg) != old_network
+    if network_changed and not network.allowed():
+        errors.append("réseau : droits manquants, relancez l'installateur "
+                      "(sudo ./install.sh)")
+    new_hostname = None
+    if cfg["name"] and cfg["name"] != old_name:
+        new_hostname = hostname_for(cfg["name"])
+        if new_hostname == socket.gethostname():
+            new_hostname = None
+        elif not rename_allowed():
+            errors.append("nom du lecteur : droits manquants pour changer le nom "
+                          "d'hôte, relancez l'installateur (sudo ./install.sh)")
     if errors:
         return jsonify(errors=errors), 400
     save_config(cfg)
-    reload_player()
-    return jsonify(ok=True)
+
+    def apply():
+        # en tâche de fond : changer de mode peut couper la connexion en cours
+        if new_hostname:
+            rename_host(new_hostname)
+        if network_changed:
+            supervisor.apply(cfg)
+        reload_player()   # écran d'accueil : nouveau nom, nouveau réseau
+
+    threading.Thread(target=apply, daemon=True).start()
+    return jsonify(ok=True, hostname=new_hostname)
+
+
+def network_settings(cfg):
+    """Réglages réseau effectifs (nom du point d'accès compris)."""
+    net = cfg["network"]
+    return net["mode"], ap_ssid(cfg), net["ap_password"]
+
+
+def rename_allowed():
+    return subprocess.run(["sudo", "-n", "-l", HOSTNAME_HELPER],
+                          capture_output=True).returncode == 0
+
+
+def rename_host(hostname):
+    res = subprocess.run(["sudo", "-n", HOSTNAME_HELPER, hostname],
+                         capture_output=True, text=True, timeout=60)
+    if res.returncode:
+        logging.getLogger("web").error("nom d'hôte : %s", res.stderr.strip())
+    else:
+        logging.getLogger("web").info("nom d'hôte : %s", hostname)
 
 
 @app.put("/api/media/<path:filename>")
@@ -470,6 +583,29 @@ def api_trigger(gpio):
         return jsonify(error="lecteur injoignable"), 503
 
 
+def start_network():
+    """Mot de passe du point d'accès (généré une fois) et mode réseau."""
+    global supervisor
+    cfg = load_config()
+    if not cfg["network"]["ap_password"]:
+        cfg["network"]["ap_password"] = network.generate_password()
+        save_config(cfg)
+    supervisor = network.Supervisor()
+    if network.allowed():
+        threading.Thread(target=supervisor.apply, args=(cfg,), daemon=True).start()
+    else:
+        supervisor.mode = cfg["network"]["mode"]
+        supervisor.error = ("droits manquants : relancez l'installateur "
+                            "(sudo ./install.sh)")
+        logging.getLogger("network").warning(supervisor.error)
+
+
+supervisor = None
+
+
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    start_network()
     app.run(host="0.0.0.0", port=PORT, threaded=True)

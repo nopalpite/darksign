@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
@@ -35,10 +36,18 @@ PHYSICAL = {
 }
 
 DEFAULT_CONFIG = {
+    # nom du lecteur (« Hall A ») : affiché, et décliné en nom d'hôte (hall-a,
+    # http://hall-a.local:8080) et en nom du Wi-Fi du point d'accès.
+    # Vide : le nom d'hôte actuel.
+    "name": None,
     "mode": "loop",                # "loop" (playlist) | "interactive"
     "volume": 100,
     "audio_device": "auto",
     "udp_port": 5000,              # messages UDP : boutons et commandes
+    # réseau : Wi-Fi du lieu (client) ou point d'accès du lecteur (ap). Nom du
+    # point d'accès vide : celui du lecteur ; mot de passe généré au premier
+    # démarrage (network.py)
+    "network": {"mode": "client", "ap_ssid": None, "ap_password": None},
     # playlist : une seule entrée tourne en boucle infinie ; sinon les entrées
     # s'enchaînent dans l'ordre, chaque vidéo répétée « repeat » fois, chaque
     # image affichée « duration » secondes
@@ -92,6 +101,25 @@ def fps_of(stream):
     return 0
 
 
+def player_name(cfg):
+    return cfg.get("name") or socket.gethostname()
+
+
+def hostname_for(name):
+    """Nom d'hôte tiré du nom du lecteur : « Hall A (Expo) » -> « hall-a-expo »."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
+    return slug[:63].rstrip("-") or "darksign"
+
+
+def ap_ssid(cfg):
+    """Nom du Wi-Fi du point d'accès : réglé, sinon le nom du lecteur."""
+    name = cfg["network"].get("ap_ssid") or player_name(cfg)
+    while len(name.encode()) > 32:   # limite du Wi-Fi, en octets
+        name = name[:-1]
+    return name
+
+
 def hdmi_audio_device(name):
     """Sortie HDMI : périphérique alsa « hdmi » plutôt que « plughw »."""
     # plughw envoie un en-tête IEC958 sans fréquence d'échantillonnage ;
@@ -114,6 +142,10 @@ def load_config():
             cfg[key].update(value)
         else:
             cfg[key] = value
+    # nom du point d'accès généré avant le nom du lecteur : il suit désormais
+    # ce nom (vide)
+    if cfg["network"].get("ap_ssid") == f"darksign-{socket.gethostname()}":
+        cfg["network"]["ap_ssid"] = None
     # configurations enregistrées avant le passage au périphérique hdmi : le
     # lecteur et l'interface (liste des sorties) voient la même valeur
     cfg["audio_device"] = hdmi_audio_device(cfg.get("audio_device") or "auto")

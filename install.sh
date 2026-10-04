@@ -15,6 +15,15 @@
 #                 installation existante (retour à l'état « premier démarrage ») ;
 #                 demande confirmation, ou exige --yes sans terminal
 #   --yes         confirme --reset sans poser la question
+#   --name NOM    nom du lecteur (« Hall A ») : affiché, et repris dans son
+#                 adresse (hall-a.local) et le nom de son point d'accès ;
+#                 sans cette option, la question est posée
+#   --network MODE  réseau : « client » (Wi-Fi du lieu, avec point d'accès de
+#                 secours) ou « ap » (point d'accès autonome) ; sans cette
+#                 option, la question est posée (réglage actuel par défaut)
+#   --ap-ssid NOM, --ap-password MOT
+#                 nom et mot de passe du point d'accès (défaut : le nom du
+#                 lecteur et un mot de passe généré)
 #   --reboot      redémarre à la fin sans demander
 #   --dry-run     affiche ce qui serait fait, sans rien modifier
 #   --force       ignore les vérifications de matériel et de version
@@ -27,7 +36,7 @@ REPO_URL="${DARKSIGN_REPO:-https://github.com/nopalpite/videoplayer.git}"
 BRANCH="${DARKSIGN_BRANCH:-main}"
 PACKAGES=(git mpv python3-mpv python3-flask python3-libgpiod python3-pil
           python3-qrcode python3-numpy fonts-inter ffmpeg avahi-daemon
-          raspi-utils-core rsync)
+          raspi-utils-core rsync dnsmasq-base polkitd)
 BOOT_PARAMS=(quiet loglevel=3 logo.nologo vt.global_cursor_default=0
              consoleblank=0 systemd.show_status=false rd.udev.log_level=3
              udev.log_level=3)
@@ -36,6 +45,7 @@ BACKUP_SUFFIX=".avant-darksign"
 TARGET_USER="${SUDO_USER:-}"
 INSTALL_DIR=""
 RESET=0; REBOOT=0; DRY_RUN=0; FORCE=0; YES=0
+NET_MODE=""; AP_SSID=""; AP_PASSWORD=""; PLAYER_NAME=""
 
 # --- affichage -----------------------------------------------------------------
 if [ -t 1 ]; then B=$'\e[1m'; A=$'\e[33m'; R=$'\e[31m'; G=$'\e[32m'; N=$'\e[0m'
@@ -63,11 +73,22 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY_RUN=1; shift ;;
         --force) FORCE=1; shift ;;
         --yes) YES=1; shift ;;
-        -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null \
+        --network) NET_MODE="$2"; shift 2 ;;
+        --name) PLAYER_NAME="$2"; shift 2 ;;
+        --ap-ssid) AP_SSID="$2"; shift 2 ;;
+        --ap-password) AP_PASSWORD="$2"; shift 2 ;;
+        -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null \
                    | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "option inconnue : $1 (voir --help)" ;;
     esac
 done
+
+case "$NET_MODE" in ""|client|ap) ;; *) die "--network : « client » ou « ap »" ;; esac
+if [ -n "$AP_PASSWORD" ] && { [ ${#AP_PASSWORD} -lt 8 ] || [ ${#AP_PASSWORD} -gt 63 ]; }; then
+    die "--ap-password : 8 à 63 caractères"
+fi
+[ ${#AP_SSID} -le 32 ] || die "--ap-ssid : 32 caractères au maximum"
+[ ${#PLAYER_NAME} -le 40 ] || die "--name : 40 caractères au maximum"
 
 echo "${B}darksign${N} — installation du lecteur"
 
@@ -175,9 +196,13 @@ for group in video render audio gpio; do
 done
 info "$TARGET_USER : accès à l'écran (video, render), au son (audio) et aux GPIO (gpio)"
 
-# interface web : redémarrer / éteindre le Pi, et rien d'autre
+# interface web : redémarrer / éteindre le Pi et changer son nom, rien d'autre.
+# Le script de renommage est copié hors du dépôt (modifiable par l'utilisateur)
+# et appartient à root : sinon la règle sudo permettrait de devenir root.
+helper=/usr/local/sbin/darksign-hostname
+run install -o root -g root -m 0755 "$INSTALL_DIR/system/darksign-hostname" "$helper"
 sudoers=/etc/sudoers.d/darksign
-rule="$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff"
+rule="$TARGET_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, $helper"
 if [ "$DRY_RUN" = 1 ]; then
     echo "    (simulation) $sudoers : $rule"
 elif [ "$(cat "$sudoers" 2>/dev/null)" != "$rule" ]; then
@@ -187,9 +212,108 @@ elif [ "$(cat "$sudoers" 2>/dev/null)" != "$rule" ]; then
     install -m 0440 "$tmp" "$sudoers"
     rm -f "$tmp"
 fi
-info "$TARGET_USER : redémarrage et extinction du Pi depuis l'interface web"
+info "$TARGET_USER : redémarrage, extinction et nom du Pi depuis l'interface web"
 
-# --- 6. services -----------------------------------------------------------------
+# interface web : réseau (Wi-Fi du lieu, point d'accès autonome) via NetworkManager
+polkit_rule=/etc/polkit-1/rules.d/50-darksign.rules
+rule_js="// darksign : l'interface web du lecteur gère le réseau (Wi-Fi, point d'accès)
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf(\"org.freedesktop.NetworkManager.\") === 0 &&
+        subject.user === \"$TARGET_USER\") {
+        return polkit.Result.YES;
+    }
+});"
+if [ "$DRY_RUN" = 1 ]; then
+    echo "    (simulation) $polkit_rule"
+elif [ -d /etc/polkit-1/rules.d ]; then
+    if [ "$(cat "$polkit_rule" 2>/dev/null)" != "$rule_js" ]; then
+        echo "$rule_js" > "$polkit_rule"
+        chmod 0644 "$polkit_rule"
+    fi
+    info "$TARGET_USER : gestion du réseau (Wi-Fi, point d'accès) depuis l'interface web"
+else
+    warn "polkit absent : le réseau ne pourra pas être géré depuis l'interface"
+fi
+
+# --- 6. nom et réseau -----------------------------------------------------------
+title "Nom et réseau"
+config_py() { sudo -u "$TARGET_USER" env -C "$INSTALL_DIR" python3 -c "$1" "${@:2}"; }
+SEP=$'\x1f'   # séparateur des champs (pas un blanc : les champs vides restent)
+# réglage courant (installation existante) : mode, nom, point d'accès
+current="$(config_py 'from common import load_config, CONFIG_FILE, player_name
+cfg = load_config()
+n = cfg["network"]
+print(n["mode"] if CONFIG_FILE.exists() and n.get("ap_password") else "",
+      player_name(cfg), n.get("ap_ssid") or "", n.get("ap_password") or "", sep="\x1f")' \
+    2>/dev/null || true)"
+IFS="$SEP" read -r CURRENT_MODE CURRENT_NAME CURRENT_SSID CURRENT_PASSWORD <<< "$current" || true
+
+if [ -z "$PLAYER_NAME" ] && has_tty && [ "$DRY_RUN" = 0 ]; then
+    echo "    Nom du lecteur, affiché et repris dans son adresse (ex. « Hall A » :"
+    echo "    http://hall-a.local:8080) et dans le nom de son point d'accès Wi-Fi."
+    read -r -p "    Nom du lecteur [${CURRENT_NAME:-$(hostname)}] : " PLAYER_NAME < /dev/tty \
+        || PLAYER_NAME=""
+    [ ${#PLAYER_NAME} -le 40 ] || { warn "nom trop long (40 caractères max.) : inchangé"; PLAYER_NAME=""; }
+fi
+
+if [ -z "$NET_MODE" ] && has_tty && [ "$DRY_RUN" = 0 ]; then
+    [ "$CURRENT_MODE" = ap ] && default=2 || default=1
+    echo "    Comment le lecteur se connecte-t-il ?"
+    echo "      1) Wi-Fi du lieu : réseau configuré dans Raspberry Pi Imager ou ajouté"
+    echo "         depuis l'interface ; point d'accès de secours si aucun n'est joignable"
+    echo "      2) Point d'accès autonome : le lecteur crée son propre réseau Wi-Fi"
+    echo "         (événementiel, sans box ni routeur)"
+    read -r -p "    Choix [$default] : " answer < /dev/tty || answer=""
+    [ "${answer:-$default}" = 2 ] && NET_MODE=ap || NET_MODE=client
+    if [ "$NET_MODE" = ap ] && [ -z "$AP_SSID$AP_PASSWORD" ]; then
+        ssid_default="${CURRENT_SSID:-le nom du lecteur}"
+        read -r -p "    Nom du réseau Wi-Fi [$ssid_default] : " AP_SSID < /dev/tty || AP_SSID=""
+        [ ${#AP_SSID} -le 32 ] || { warn "nom trop long : inchangé"; AP_SSID=""; }
+        pass_hint="${CURRENT_PASSWORD:+vide = garder « $CURRENT_PASSWORD »}"
+        while :; do
+            read -r -p "    Mot de passe (8 à 63 caractères, ${pass_hint:-vide = généré}) : " \
+                AP_PASSWORD < /dev/tty || AP_PASSWORD=""
+            [ -z "$AP_PASSWORD" ] || { [ ${#AP_PASSWORD} -ge 8 ] && [ ${#AP_PASSWORD} -le 63 ]; } \
+                && break
+            warn "8 à 63 caractères"
+        done
+    fi
+fi
+NET_MODE="${NET_MODE:-${CURRENT_MODE:-client}}"
+
+if [ "$DRY_RUN" = 1 ]; then
+    echo "    (simulation) nom : ${PLAYER_NAME:-inchangé}, réseau : $NET_MODE"
+else
+    # écrit dans la configuration du lecteur ; l'interface web applique le
+    # réseau au démarrage (network.py), comme un changement fait depuis la page
+    result="$(config_py 'import sys
+from common import ap_ssid, hostname_for, load_config, player_name, save_config
+from network import generate_password
+mode, ssid, password, name = sys.argv[1:5]
+cfg = load_config()
+net = cfg["network"]
+if name:
+    cfg["name"] = name
+net["mode"] = mode
+net["ap_ssid"] = ssid or net.get("ap_ssid")   # vide : le nom du lecteur
+net["ap_password"] = password or net.get("ap_password") or generate_password()
+save_config(cfg)
+print(hostname_for(cfg["name"]) if cfg["name"] else "", player_name(cfg),
+      ap_ssid(cfg), net["ap_password"], sep="\x1f")' \
+        "$NET_MODE" "$AP_SSID" "$AP_PASSWORD" "$PLAYER_NAME")"
+    IFS="$SEP" read -r NEW_HOSTNAME PLAYER_NAME AP_SSID AP_PASSWORD <<< "$result"
+    if [ -n "$NEW_HOSTNAME" ] && [ "$NEW_HOSTNAME" != "$(hostname)" ]; then
+        /usr/local/sbin/darksign-hostname "$NEW_HOSTNAME"
+    fi
+    info "nom : « $PLAYER_NAME »  ·  adresse : http://$(hostname).local:8080"
+fi
+if [ "$NET_MODE" = ap ]; then
+    info "point d'accès autonome : « $AP_SSID », mot de passe « $AP_PASSWORD »"
+else
+    info "Wi-Fi du lieu ; point d'accès de secours « $AP_SSID » si aucun réseau n'est joignable"
+fi
+
+# --- 7. services -----------------------------------------------------------------
 title "Services"
 for unit in videoplayer videoplayer-web; do
     template="$INSTALL_DIR/systemd/$unit.service.in"
@@ -211,7 +335,7 @@ for unit in videoplayer videoplayer-web; do   # mise à jour : nouveau code char
     fi
 done
 
-# --- 7. démarrage silencieux --------------------------------------------------------
+# --- 8. démarrage silencieux --------------------------------------------------------
 title "Démarrage silencieux"
 backup() {   # garde une seule sauvegarde : l'original d'avant darksign
     [ -f "$1$BACKUP_SUFFIX" ] || run cp -p "$1" "$1$BACKUP_SUFFIX"
@@ -270,7 +394,12 @@ echo "${G}${B}Installation terminée.${N}"
 host="$(hostname)"
 addr="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "    Au démarrage : écran noir, animation darksign, puis l'écran d'accueil."
-echo "    Administration : http://${addr:-<adresse-du-pi>}:8080  ou  http://$host.local:8080"
+if [ "$NET_MODE" = ap ]; then
+    echo "    Point d'accès : « $AP_SSID », mot de passe « $AP_PASSWORD »"
+    echo "    Administration (une fois connecté à ce réseau) : http://10.42.0.1:8080"
+else
+    echo "    Administration : http://${addr:-<adresse-du-pi>}:8080  ou  http://$host.local:8080"
+fi
 echo "    Sauvegardes de la configuration de démarrage : $BOOT_DIR/*$BACKUP_SUFFIX"
 if [ "$DRY_RUN" = 1 ]; then
     echo "    (simulation : rien n'a été modifié)"
