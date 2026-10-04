@@ -32,7 +32,7 @@ SSH enabled. The code needs mpv ≥ 0.38 and libgpiod 2, which Bookworm lacks.
 
 On first boot, connect over SSH and run:
 
-    curl -fsSL https://raw.githubusercontent.com/nopalpite/videoplayer/main/install.sh | sudo bash
+    curl -fsSL https://raw.githubusercontent.com/nopalpite/darksign/main/install.sh | sudo bash
 
 or, from a cloned repository: `sudo ./install.sh`. Reboot at the end: the Pi
 boots into the darksign animation, then the setup screen, with no media,

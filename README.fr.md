@@ -34,7 +34,7 @@ Bookworm.
 
 Au premier démarrage, connectez-vous en SSH puis lancez :
 
-    curl -fsSL https://raw.githubusercontent.com/nopalpite/videoplayer/main/install.sh | sudo bash
+    curl -fsSL https://raw.githubusercontent.com/nopalpite/darksign/main/install.sh | sudo bash
 
 ou, depuis un dépôt cloné : `sudo ./install.sh`. Redémarrez à la fin : le Pi
 démarre sur l'animation darksign puis sur l'écran d'accueil, sans aucun média,

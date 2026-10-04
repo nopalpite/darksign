@@ -2,7 +2,7 @@
 # DarkSign installer: from a fresh Raspberry Pi OS Lite (Trixie) card to a
 # player that boots straight into the animation.
 #
-#   curl -fsSL https://raw.githubusercontent.com/nopalpite/videoplayer/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/nopalpite/darksign/main/install.sh | sudo bash
 # or, from a cloned repository:
 #   sudo ./install.sh [options]
 #
@@ -38,7 +38,7 @@
 # language, add a T_xx array and the language to LANGUAGES.
 set -euo pipefail
 
-REPO_URL="${DARKSIGN_REPO:-https://github.com/nopalpite/videoplayer.git}"
+REPO_URL="${DARKSIGN_REPO:-https://github.com/nopalpite/darksign.git}"
 BRANCH="${DARKSIGN_BRANCH:-main}"
 PACKAGES=(git mpv python3-mpv python3-flask python3-libgpiod python3-pil
           python3-qrcode python3-numpy fonts-inter ffmpeg avahi-daemon
